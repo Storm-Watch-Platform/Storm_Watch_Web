@@ -1,29 +1,40 @@
 import React, { useState, useEffect } from 'react';
-import { Clock } from 'lucide-react';
+import { Clock, AlertCircle, Loader } from 'lucide-react';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import FilterBar from './components/FilterBar';
 import MapView from './components/MapView';
 import ReportCard from './components/ReportCard';
 import { mockDangerZones, mockReports } from './data/mockReports';
-
 function App() {
   const [selectedTab, setSelectedTab] = useState('map');
   const [filterSeverity, setFilterSeverity] = useState('all');
   const [selectedReport, setSelectedReport] = useState(null);
   const [mapLoaded, setMapLoaded] = useState(false);
+  const [mapError, setMapError] = useState(null);
 
   useEffect(() => {
     // Load Google Maps
     if (!window.google) {
       const script = document.createElement('script');
-      script.src = `https://maps.googleapis.com/maps/api/js?key=AIzaSyAkvzqlDP5KIqxTBF3vNABi2Ggphyv0fW4`;
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY}`;
       script.async = true;
       script.defer = true;
-      script.onload = () => setMapLoaded(true);
+      
+      script.onload = () => {
+        setMapLoaded(true);
+        setMapError(null);
+      };
+      
+      script.onerror = () => {
+        setMapError('Failed to load Google Maps. Please check your API key and internet connection.');
+        setMapLoaded(false);
+      };
+      
       document.head.appendChild(script);
     } else {
       setMapLoaded(true);
+      setMapError(null);
     }
   }, []);
 
@@ -73,7 +84,24 @@ function App() {
       />
 
       <main className="container mx-auto px-4 py-6">
-        {selectedTab === 'map' && (
+        {/* Error Alert */}
+        {mapError && (
+          <div className="mb-6 p-4 bg-red-500/20 border border-red-500 rounded-lg flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+            <p className="text-red-200">{mapError}</p>
+          </div>
+        )}
+
+        {/* Loading Indicator */}
+        {selectedTab === 'map' && !mapLoaded && !mapError && (
+          <div className="mb-6 p-8 bg-slate-800/50 backdrop-blur-sm rounded-xl border border-slate-700 flex items-center justify-center gap-3 h-[600px]">
+            <Loader className="w-6 h-6 text-blue-400 animate-spin" />
+            <p className="text-slate-300">Đang tải bản đồ...</p>
+          </div>
+        )}
+
+        {/* Map Tab */}
+        {selectedTab === 'map' && mapLoaded && !mapError && (
           <MapView
             dangerZones={mockDangerZones}
             reports={mockReports}

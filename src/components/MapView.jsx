@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 
 export default function MapView({ 
   dangerZones, 
@@ -8,29 +8,40 @@ export default function MapView({
 }) {
   const mapRef = useRef(null);
   const googleMapRef = useRef(null);
+  const infoWindowRef = useRef(null);
+  const polygonsRef = useRef([]);
+  const markersRef = useRef([]);
 
+  // Initialize map only once when mapLoaded becomes true
   useEffect(() => {
     if (mapLoaded && mapRef.current && !googleMapRef.current) {
       initMap();
     }
-  }, [mapLoaded, dangerZones, reports]);
+  }, [mapLoaded]);
 
-  const initMap = () => {
-    const map = new window.google.maps.Map(mapRef.current, {
-      center: { lat: 10.8, lng: 106.68 },
-      zoom: 13,
-      styles: [
-        {
-          featureType: "water",
-          elementType: "geometry",
-          stylers: [{ color: "#a2daf2" }]
-        }
-      ]
+  const clearMapObjects = useCallback(() => {
+    // Remove all polygons
+    polygonsRef.current.forEach(polygon => {
+      polygon.setMap(null);
     });
+    polygonsRef.current = [];
 
-    googleMapRef.current = map;
+    // Remove all markers
+    markersRef.current.forEach(marker => {
+      marker.setMap(null);
+    });
+    markersRef.current = [];
 
-    // Add danger zones
+    // Close infoWindow
+    if (infoWindowRef.current) {
+      infoWindowRef.current.close();
+    }
+  }, []);
+
+  const addDangerZones = useCallback(() => {
+    const map = googleMapRef.current;
+    const infoWindow = infoWindowRef.current;
+
     dangerZones.forEach(zone => {
       const color = zone.riskLevel === 'high' ? '#ef4444' : 
                     zone.riskLevel === 'medium' ? '#f97316' : '#fbbf24';
@@ -45,7 +56,8 @@ export default function MapView({
         map: map
       });
 
-      const infoWindow = new window.google.maps.InfoWindow();
+      polygonsRef.current.push(polygon);
+
       polygon.addListener('click', (e) => {
         infoWindow.setContent(`
           <div style="padding: 8px;">
@@ -59,8 +71,11 @@ export default function MapView({
         infoWindow.open(map);
       });
     });
+  }, [dangerZones]);
 
-    // Add report markers
+  const addReportMarkers = useCallback(() => {
+    const map = googleMapRef.current;
+
     reports.forEach(report => {
       const marker = new window.google.maps.Marker({
         position: report.location,
@@ -76,10 +91,40 @@ export default function MapView({
         }
       });
 
+      markersRef.current.push(marker);
+
       marker.addListener('click', () => {
         onReportClick(report);
       });
     });
+  }, [reports, onReportClick]);
+
+  // Update markers and polygons when data changes
+  useEffect(() => {
+    if (googleMapRef.current) {
+      clearMapObjects();
+      addDangerZones();
+      addReportMarkers();
+    }
+  }, [clearMapObjects, addDangerZones, addReportMarkers]);
+
+  const initMap = () => {
+    const map = new window.google.maps.Map(mapRef.current, {
+      center: { lat: 10.8, lng: 106.68 },
+      zoom: 13,
+      styles: [
+        {
+          featureType: "water",
+          elementType: "geometry",
+          stylers: [{ color: "#a2daf2" }]
+        }
+      ]
+    });
+
+    googleMapRef.current = map;
+    
+    // Initialize a shared infoWindow for polygons
+    infoWindowRef.current = new window.google.maps.InfoWindow();
   };
 
   return (
