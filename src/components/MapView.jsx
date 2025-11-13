@@ -1,47 +1,34 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef } from 'react';
 
 export default function MapView({ 
   dangerZones, 
   reports, 
   onReportClick,
-  mapLoaded 
+  mapLoaded,
+  regionBounds
 }) {
   const mapRef = useRef(null);
   const googleMapRef = useRef(null);
-  const infoWindowRef = useRef(null);
-  const polygonsRef = useRef([]);
-  const markersRef = useRef([]);
 
-  // Initialize map only once when mapLoaded becomes true
-  useEffect(() => {
-    if (mapLoaded && mapRef.current && !googleMapRef.current) {
-      initMap();
-    }
-  }, [mapLoaded]);
-
-  const clearMapObjects = useCallback(() => {
-    // Remove all polygons
-    polygonsRef.current.forEach(polygon => {
-      polygon.setMap(null);
+  const initMap = () => {
+    if (!window.google || !mapRef.current) return;
+    
+    const map = new window.google.maps.Map(mapRef.current, {
+      center: { lat: 10.8, lng: 106.68 },
+      zoom: 13,
+      styles: [
+        {
+          featureType: "water",
+          elementType: "geometry",
+          stylers: [{ color: "#a2daf2" }]
+        }
+      ]
     });
-    polygonsRef.current = [];
 
-    // Remove all markers
-    markersRef.current.forEach(marker => {
-      marker.setMap(null);
-    });
-    markersRef.current = [];
+    googleMapRef.current = map;
+    const infoWindow = new window.google.maps.InfoWindow();
 
-    // Close infoWindow
-    if (infoWindowRef.current) {
-      infoWindowRef.current.close();
-    }
-  }, []);
-
-  const addDangerZones = useCallback(() => {
-    const map = googleMapRef.current;
-    const infoWindow = infoWindowRef.current;
-
+    // Add danger zones
     dangerZones.forEach(zone => {
       const color = zone.riskLevel === 'high' ? '#ef4444' : 
                     zone.riskLevel === 'medium' ? '#f97316' : '#fbbf24';
@@ -56,8 +43,6 @@ export default function MapView({
         map: map
       });
 
-      polygonsRef.current.push(polygon);
-
       polygon.addListener('click', (e) => {
         infoWindow.setContent(`
           <div style="padding: 8px;">
@@ -71,11 +56,8 @@ export default function MapView({
         infoWindow.open(map);
       });
     });
-  }, [dangerZones]);
 
-  const addReportMarkers = useCallback(() => {
-    const map = googleMapRef.current;
-
+    // Add report markers
     reports.forEach(report => {
       const marker = new window.google.maps.Marker({
         position: report.location,
@@ -91,41 +73,38 @@ export default function MapView({
         }
       });
 
-      markersRef.current.push(marker);
-
       marker.addListener('click', () => {
         onReportClick(report);
       });
     });
-  }, [reports, onReportClick]);
-
-  // Update markers and polygons when data changes
-  useEffect(() => {
-    if (googleMapRef.current) {
-      clearMapObjects();
-      addDangerZones();
-      addReportMarkers();
-    }
-  }, [clearMapObjects, addDangerZones, addReportMarkers]);
-
-  const initMap = () => {
-    const map = new window.google.maps.Map(mapRef.current, {
-      center: { lat: 10.8, lng: 106.68 },
-      zoom: 13,
-      styles: [
-        {
-          featureType: "water",
-          elementType: "geometry",
-          stylers: [{ color: "#a2daf2" }]
-        }
-      ]
-    });
-
-    googleMapRef.current = map;
-    
-    // Initialize a shared infoWindow for polygons
-    infoWindowRef.current = new window.google.maps.InfoWindow();
   };
+
+  useEffect(() => {
+    if (mapLoaded && mapRef.current && !googleMapRef.current && window.google) {
+      initMap();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapLoaded, dangerZones, reports]);
+
+  // Handle region change - zoom to region
+  useEffect(() => {
+    if (googleMapRef.current && regionBounds) {
+      const map = googleMapRef.current;
+      
+      if (regionBounds.zoom) {
+        // Simple region with coordinates and zoom
+        map.setCenter(regionBounds.coordinates);
+        map.setZoom(regionBounds.zoom);
+      } else if (regionBounds.bounds) {
+        // Region with bounds
+        const bounds = new window.google.maps.LatLngBounds(
+          { lat: regionBounds.bounds.south, lng: regionBounds.bounds.west },
+          { lat: regionBounds.bounds.north, lng: regionBounds.bounds.east }
+        );
+        map.fitBounds(bounds);
+      }
+    }
+  }, [regionBounds]);
 
   return (
     <div className="bg-slate-800/50 backdrop-blur-sm rounded-xl overflow-hidden border border-slate-700 shadow-2xl">

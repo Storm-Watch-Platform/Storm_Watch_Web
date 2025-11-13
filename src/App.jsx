@@ -5,6 +5,7 @@ import Sidebar from './components/Sidebar';
 import FilterBar from './components/FilterBar';
 import MapView from './components/MapView';
 import ReportCard from './components/ReportCard';
+import RegionFilter from './components/RegionFilter';
 import { mockDangerZones, mockReports } from './data/mockReports';
 function App() {
   const [selectedTab, setSelectedTab] = useState('map');
@@ -12,6 +13,9 @@ function App() {
   const [selectedReport, setSelectedReport] = useState(null);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [mapError, setMapError] = useState(null);
+  const [selectedRegion, setSelectedRegion] = useState('all');
+  const [regionBounds, setRegionBounds] = useState(null);
+  const [regionFilterOpen, setRegionFilterOpen] = useState(false);
 
   useEffect(() => {
     // Load Google Maps
@@ -50,6 +54,12 @@ function App() {
   const handleViewOnMap = (report) => {
     setSelectedReport(report);
     setSelectedTab('map');
+  };
+
+  const handleRegionChange = (region) => {
+    setSelectedRegion(region.id);
+    setRegionBounds(region);
+    setRegionFilterOpen(false);
   };
 
   const getRiskColor = (level) => {
@@ -102,12 +112,25 @@ function App() {
 
         {/* Map Tab */}
         {selectedTab === 'map' && mapLoaded && !mapError && (
-          <MapView
-            dangerZones={mockDangerZones}
-            reports={mockReports}
-            onReportClick={handleReportClick}
-            mapLoaded={mapLoaded}
-          />
+          <>
+            <div className="mb-6">
+              <RegionFilter 
+                selectedRegion={selectedRegion}
+                setSelectedRegion={setSelectedRegion}
+                onRegionChange={handleRegionChange}
+                isOpen={regionFilterOpen}
+                setIsOpen={setRegionFilterOpen}
+              />
+            </div>
+            <MapView
+              dangerZones={mockDangerZones}
+              reports={mockReports}
+              onReportClick={handleReportClick}
+              mapLoaded={mapLoaded}
+              selectedRegion={selectedRegion}
+              regionBounds={regionBounds}
+            />
+          </>
         )}
 
         {selectedTab === 'reports' && (
