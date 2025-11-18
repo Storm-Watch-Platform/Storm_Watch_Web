@@ -6,6 +6,7 @@ import ReportsPanel from './components/ReportsPanel';
 import SearchLocation from './components/SearchLocation';
 import ReportModal from './components/ReportModal';
 import { queryZoneByCoordinates } from './services/api';
+import { REGION_PRESETS } from './data/regionMockData';
 
 const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
 const DEFAULT_LOCATION = {
@@ -145,7 +146,12 @@ function App() {
           </div>
         )}
 
-        <SearchLocation onLocationSelect={handleLocationSelect} isDisabled={!mapLoaded || isSearching} />
+        <SearchLocation
+          onLocationSelect={handleLocationSelect}
+          isDisabled={!mapLoaded || isSearching}
+          regions={REGION_PRESETS}
+          mapsReady={mapLoaded}
+        />
 
         {zoneSummary && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
