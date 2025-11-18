@@ -1,7 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Search, Loader2, Crosshair } from 'lucide-react';
 
-export default function SearchLocation({ onLocationSelect, isDisabled, regions = [], mapsReady }) {
+  export default function SearchLocation({
+  onLocationSelect,
+  isDisabled,
+  regions = [],
+  mapsReady,
+  onUseCurrentLocation,
+}) {
   const inputRef = useRef(null);
   const autocompleteRef = useRef(null);
   const [manualAddress, setManualAddress] = useState('');
@@ -37,11 +43,33 @@ export default function SearchLocation({ onLocationSelect, isDisabled, regions =
     setInitialised(true);
   }, [mapsReady, initialised, onLocationSelect]);
 
-  const handleManualSubmit = (e) => {
+  const handleManualSubmit = async (e) => {
     e.preventDefault();
     if (!manualAddress || isDisabled) return;
     if (!window.google || !window.google.maps) {
-      setError('Google Maps chưa sẵn sàng. Vui lòng đợi trong giây lát.');
+      try {
+        const queryUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(manualAddress)}&format=json&limit=1`;
+        const response = await fetch(queryUrl, {
+          headers: {
+            'Accept-Language': 'vi',
+          },
+        });
+        const data = await response.json();
+        if (data && data.length > 0) {
+          const result = data[0];
+          onLocationSelect({
+            lat: parseFloat(result.lat),
+            lng: parseFloat(result.lon),
+            address: result.display_name,
+          });
+          setError('');
+        } else {
+          setError('Không tìm thấy địa điểm. Thử nhập cụ thể hơn.');
+        }
+      } catch (err) {
+        console.error('Fallback geocode error', err);
+        setError('Không thể tìm kiếm địa điểm. Vui lòng kiểm tra kết nối mạng.');
+      }
       return;
     }
 
@@ -77,11 +105,22 @@ export default function SearchLocation({ onLocationSelect, isDisabled, regions =
   };
 
   const handleUseCurrentLocation = () => {
+    setError('');
+    if (onUseCurrentLocation) {
+      onUseCurrentLocation()
+        .then(() => setError(''))
+        .catch((err) => {
+          setError(
+            err?.message || 'Không thể lấy vị trí hiện tại. Hãy bật quyền truy cập vị trí cho trình duyệt.',
+          );
+        });
+      return;
+    }
+
     if (!navigator.geolocation) {
       setError('Trình duyệt không hỗ trợ xác định vị trí.');
       return;
     }
-    setError('');
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;

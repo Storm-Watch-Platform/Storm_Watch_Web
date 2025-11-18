@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { AlertCircle, Loader } from 'lucide-react';
 import Header from './components/Header';
 import MapView from './components/MapView';
@@ -39,6 +39,7 @@ function App() {
   const [selectedReport, setSelectedReport] = useState(null);
   const [highlightedReport, setHighlightedReport] = useState(null);
   const [bootstrapped, setBootstrapped] = useState(false);
+  const userSelectedRef = useRef(false);
 
   useEffect(() => {
     if (!window.google) {
@@ -64,7 +65,7 @@ function App() {
     }
   }, []);
 
-  const applyReportFilters = (rawReports = [], center = DEFAULT_LOCATION) => {
+  const applyReportFilters = useCallback((rawReports = [], center = DEFAULT_LOCATION) => {
     const now = Date.now();
     return rawReports
       .filter((report) => now - new Date(report.timestamp).getTime() <= THREE_DAYS_MS)
@@ -79,9 +80,12 @@ function App() {
         return km <= 5;
       })
       .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-  };
+  }, []);
 
-  const handleLocationSelect = async (location) => {
+  const handleLocationSelect = useCallback(async (location, { fromUser = false } = {}) => {
+    if (fromUser) {
+      userSelectedRef.current = true;
+    }
     if (!location) return;
     setIsSearching(true);
     setSelectedReport(null);
@@ -106,14 +110,57 @@ function App() {
     } finally {
       setIsSearching(false);
     }
-  };
+  }, [applyReportFilters]);
+
+  const requestUserLocation = useCallback(
+    (options = { silent: false }) =>
+      new Promise((resolve, reject) => {
+        if (!navigator.geolocation) {
+          if (options.silent) {
+            handleLocationSelect(DEFAULT_LOCATION, { fromUser: false }).finally(resolve);
+          } else {
+            reject(new Error('Trình duyệt không hỗ trợ xác định vị trí.'));
+          }
+          return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            if (options.silent && userSelectedRef.current) {
+              resolve();
+              return;
+            }
+            handleLocationSelect(
+              {
+                lat: pos.coords.latitude,
+                lng: pos.coords.longitude,
+                address: 'Vị trí hiện tại của bạn',
+              },
+              { fromUser: !options.silent },
+            )
+              .then(resolve)
+              .catch(reject);
+          },
+          (err) => {
+            console.warn('Geolocation error', err);
+            if (options.silent) {
+              handleLocationSelect(DEFAULT_LOCATION, { fromUser: false }).finally(resolve);
+            } else {
+              reject(new Error('Không thể lấy vị trí hiện tại. Hãy bật quyền truy cập vị trí cho trình duyệt.'));
+            }
+          },
+          { enableHighAccuracy: true, timeout: 10000 },
+        );
+      }),
+    [handleLocationSelect],
+  );
 
   useEffect(() => {
     if (mapLoaded && !bootstrapped) {
-      handleLocationSelect(DEFAULT_LOCATION);
+      requestUserLocation({ silent: true }).catch(() => {});
       setBootstrapped(true);
     }
-  }, [mapLoaded, bootstrapped]);
+  }, [mapLoaded, bootstrapped, requestUserLocation]);
 
   const zoneSummary = useMemo(() => {
     if (!zoneInfo) return null;
@@ -147,10 +194,11 @@ function App() {
         )}
 
         <SearchLocation
-          onLocationSelect={handleLocationSelect}
-          isDisabled={!mapLoaded || isSearching}
+          onLocationSelect={(location) => handleLocationSelect(location, { fromUser: true })}
+          isDisabled={isSearching}
           regions={REGION_PRESETS}
           mapsReady={mapLoaded}
+          onUseCurrentLocation={() => requestUserLocation({ silent: false })}
         />
 
         {zoneSummary && (
