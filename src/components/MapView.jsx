@@ -1,129 +1,134 @@
 import React, { useEffect, useRef } from 'react';
 
-export default function MapView({ 
-  dangerZones, 
-  reports, 
-  onReportClick,
+const mapStyles = [
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0f172a' }] },
+  { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#111827' }] },
+  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1f2937' }] },
+];
+
+const severityColor = {
+  high: '#ef4444',
+  medium: '#f97316',
+  low: '#facc15',
+};
+
+export default function MapView({
   mapLoaded,
-  regionBounds
+  centerLocation,
+  reports,
+  onMarkerClick,
+  highlightedReport,
 }) {
   const mapRef = useRef(null);
-  const googleMapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const markersRef = useRef([]);
+  const circleRef = useRef(null);
+  const centerMarkerRef = useRef(null);
 
   const initMap = () => {
     if (!window.google || !mapRef.current) return;
-    
-    const map = new window.google.maps.Map(mapRef.current, {
-      center: { lat: 10.8, lng: 106.68 },
+
+    mapInstanceRef.current = new window.google.maps.Map(mapRef.current, {
+      center: centerLocation || { lat: 16.4637, lng: 107.5909 }, // Huế default
       zoom: 13,
-      styles: [
-        {
-          featureType: "water",
-          elementType: "geometry",
-          stylers: [{ color: "#a2daf2" }]
-        }
-      ]
-    });
-
-    googleMapRef.current = map;
-    const infoWindow = new window.google.maps.InfoWindow();
-
-    // Add danger zones
-    dangerZones.forEach(zone => {
-      const color = zone.riskLevel === 'high' ? '#ef4444' : 
-                    zone.riskLevel === 'medium' ? '#f97316' : '#fbbf24';
-      
-      const polygon = new window.google.maps.Polygon({
-        paths: zone.coordinates,
-        strokeColor: color,
-        strokeOpacity: 0.8,
-        strokeWeight: 2,
-        fillColor: color,
-        fillOpacity: 0.35,
-        map: map
-      });
-
-      polygon.addListener('click', (e) => {
-        infoWindow.setContent(`
-          <div style="padding: 8px;">
-            <h3 style="font-weight: bold; margin-bottom: 4px;">${zone.name}</h3>
-            <p style="margin: 2px 0;">Mức độ: <span style="color: ${color}; font-weight: bold;">${zone.riskLevel.toUpperCase()}</span></p>
-            <p style="margin: 2px 0;">Risk Score: ${zone.score}/10</p>
-            <p style="margin: 2px 0;">Báo cáo: ${zone.reportCount}</p>
-          </div>
-        `);
-        infoWindow.setPosition(e.latLng);
-        infoWindow.open(map);
-      });
-    });
-
-    // Add report markers
-    reports.forEach(report => {
-      const marker = new window.google.maps.Marker({
-        position: report.location,
-        map: map,
-        icon: {
-          path: window.google.maps.SymbolPath.CIRCLE,
-          scale: 8,
-          fillColor: report.severity === 'high' ? '#ef4444' : 
-                     report.severity === 'medium' ? '#f97316' : '#fbbf24',
-          fillOpacity: 1,
-          strokeColor: '#fff',
-          strokeWeight: 2
-        }
-      });
-
-      marker.addListener('click', () => {
-        onReportClick(report);
-      });
+      styles: mapStyles,
+      disableDefaultUI: false,
     });
   };
 
   useEffect(() => {
-    if (mapLoaded && mapRef.current && !googleMapRef.current && window.google) {
+    if (mapLoaded && mapRef.current && !mapInstanceRef.current && window.google) {
       initMap();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapLoaded, dangerZones, reports]);
+  }, [mapLoaded]);
 
-  // Handle region change - zoom to region
+  // Draw 5km circle + center marker
   useEffect(() => {
-    if (googleMapRef.current && regionBounds) {
-      const map = googleMapRef.current;
-      
-      if (regionBounds.zoom) {
-        // Simple region with coordinates and zoom
-        map.setCenter(regionBounds.coordinates);
-        map.setZoom(regionBounds.zoom);
-      } else if (regionBounds.bounds) {
-        // Region with bounds
-        const bounds = new window.google.maps.LatLngBounds(
-          { lat: regionBounds.bounds.south, lng: regionBounds.bounds.west },
-          { lat: regionBounds.bounds.north, lng: regionBounds.bounds.east }
-        );
-        map.fitBounds(bounds);
-      }
+    if (!mapInstanceRef.current || !centerLocation || !window.google) return;
+    const map = mapInstanceRef.current;
+
+    map.panTo(centerLocation);
+    if (map.getZoom() < 13) {
+      map.setZoom(13);
     }
-  }, [regionBounds]);
+
+    if (circleRef.current) {
+      circleRef.current.setMap(null);
+    }
+
+    circleRef.current = new window.google.maps.Circle({
+      strokeColor: '#3b82f6',
+      strokeOpacity: 0.9,
+      strokeWeight: 2,
+      fillColor: '#3b82f6',
+      fillOpacity: 0.15,
+      map,
+      center: centerLocation,
+      radius: 5000,
+    });
+
+    if (centerMarkerRef.current) {
+      centerMarkerRef.current.setMap(null);
+    }
+
+    centerMarkerRef.current = new window.google.maps.Marker({
+      position: centerLocation,
+      map,
+      icon: {
+        path: window.google.maps.SymbolPath.CIRCLE,
+        scale: 12,
+        fillColor: '#3b82f6',
+        fillOpacity: 1,
+        strokeColor: '#fff',
+        strokeWeight: 3,
+      },
+      title: 'Tâm vùng tìm kiếm',
+    });
+  }, [centerLocation]);
+
+  // Render report markers
+  useEffect(() => {
+    if (!mapInstanceRef.current || !window.google) return;
+
+    markersRef.current.forEach((marker) => marker.setMap(null));
+    markersRef.current = [];
+
+    (reports || []).forEach((report) => {
+      const marker = new window.google.maps.Marker({
+        position: report.location,
+        map: mapInstanceRef.current,
+        icon: {
+          path: window.google.maps.SymbolPath.CIRCLE,
+          scale: 8,
+          fillColor: severityColor[report.severity] || severityColor.low,
+          fillOpacity: 1,
+          strokeColor: '#fff',
+          strokeWeight: 2,
+        },
+      });
+
+      marker.addListener('click', () => onMarkerClick(report));
+      markersRef.current.push(marker);
+    });
+  }, [reports, onMarkerClick]);
+
+  // Focus on highlighted report
+  useEffect(() => {
+    if (!mapInstanceRef.current || !highlightedReport) return;
+    mapInstanceRef.current.panTo(highlightedReport.location);
+    if (mapInstanceRef.current.getZoom() < 15) {
+      mapInstanceRef.current.setZoom(15);
+    }
+  }, [highlightedReport]);
 
   return (
-    <div className="bg-slate-800/50 backdrop-blur-sm rounded-xl overflow-hidden border border-slate-700 shadow-2xl">
-      <div ref={mapRef} className="w-full h-[600px]"></div>
-      <div className="p-4 bg-slate-900/50 border-t border-slate-700">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-4 bg-red-500 rounded-full"></div>
-            <span className="text-sm text-slate-300">Nguy hiểm cao</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-4 bg-orange-500 rounded-full"></div>
-            <span className="text-sm text-slate-300">Trung bình</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-4 bg-yellow-500 rounded-full"></div>
-            <span className="text-sm text-slate-300">Thấp</span>
-          </div>
-        </div>
+    <div className="bg-slate-900/50 border border-slate-700 rounded-3xl overflow-hidden h-full">
+      <div ref={mapRef} className="w-full h-[650px]" />
+      <div className="p-4 bg-slate-950/70 border-t border-slate-800">
+        <p className="text-sm text-slate-400">
+          Nhấn vào điểm trên bản đồ để mở báo cáo chi tiết • Vùng hiển thị bán kính 5km
+        </p>
       </div>
     </div>
   );
