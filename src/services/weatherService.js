@@ -1,28 +1,10 @@
-// Weather Service - Google Maps Platform Weather API Integration
+// Weather Service - OpenWeatherMap API Integration
 const WEATHER_API_KEY = import.meta.env.VITE_WEATHER_API_KEY;
-const WEATHER_API_BASE = 'https://weather.googleapis.com/v1';
+const WEATHER_API_BASE = "https://api.openweathermap.org/data/2.5";
 
 // Cache to avoid excessive API calls
 const weatherCache = new Map();
 const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
-
-// Weather type to icon mapping for Google Weather API
-const WEATHER_ICON_MAP = {
-  'CLEAR': '01',
-  'CLOUDY': '03',
-  'PARTLY_CLOUDY': '02',
-  'MOSTLY_CLOUDY': '04',
-  'RAIN': '10',
-  'LIGHT_RAIN': '09',
-  'HEAVY_RAIN': '10',
-  'SNOW': '13',
-  'LIGHT_SNOW': '13',
-  'HEAVY_SNOW': '13',
-  'THUNDERSTORM': '11',
-  'FOG': '50',
-  'HAZE': '50',
-  'MIST': '50',
-};
 
 /**
  * Get weather data by coordinates
@@ -31,10 +13,12 @@ const WEATHER_ICON_MAP = {
  */
 export async function getWeatherByCoordinates(coordinates) {
   if (!coordinates || !coordinates.lat || !coordinates.lng) {
-    throw new Error('Invalid coordinates');
+    throw new Error("Invalid coordinates");
   }
 
-  const cacheKey = `${coordinates.lat.toFixed(2)},${coordinates.lng.toFixed(2)}`;
+  const cacheKey = `${coordinates.lat.toFixed(2)},${coordinates.lng.toFixed(
+    2
+  )}`;
   const cached = weatherCache.get(cacheKey);
 
   // Return cached data if still valid
@@ -42,40 +26,81 @@ export async function getWeatherByCoordinates(coordinates) {
     return cached.data;
   }
 
-  try {
-    const url = `${WEATHER_API_BASE}/currentConditions:lookup?key=${WEATHER_API_KEY}&location.latitude=${coordinates.lat}&location.longitude=${coordinates.lng}&unitsSystem=METRIC`;
+  // Check if API key is configured
+  if (!WEATHER_API_KEY) {
+    console.warn("VITE_WEATHER_API_KEY is not configured. Using mock data.");
+    console.warn(
+      "💡 Để lấy dữ liệu thời tiết thật, thêm VITE_WEATHER_API_KEY vào file .env"
+    );
+    return getMockWeatherData(coordinates);
+  }
 
-    const response = await fetch(url);
+  console.log(
+    "✅ Weather API Key found:",
+    WEATHER_API_KEY.substring(0, 10) + "..."
+  );
+
+  try {
+    // OpenWeatherMap API endpoint
+    const url = `${WEATHER_API_BASE}/weather?lat=${coordinates.lat}&lon=${coordinates.lng}&appid=${WEATHER_API_KEY}&units=metric&lang=vi`;
+
+    console.log("🌤️ Fetching weather data for:", {
+      lat: coordinates.lat,
+      lng: coordinates.lng,
+    });
+
+    // OpenWeatherMap API supports CORS, no need for custom headers
+    // Removing Content-Type header to avoid unnecessary preflight request
+    const response = await fetch(url, {
+      method: "GET",
+      mode: "cors",
+    });
 
     if (!response.ok) {
-      if (response.status === 401 || response.status === 403) {
-        throw new Error('API key không hợp lệ hoặc Weather API chưa được enable');
+      const errorText = await response.text();
+      let errorMessage = `HTTP error! status: ${response.status}`;
+
+      if (response.status === 401) {
+        errorMessage =
+          "API key không hợp lệ. Vui lòng kiểm tra lại VITE_WEATHER_API_KEY trong file .env";
+      } else if (response.status === 429) {
+        errorMessage = "Đã vượt quá giới hạn API calls. Vui lòng thử lại sau.";
+      } else if (response.status === 404) {
+        errorMessage = "Không tìm thấy dữ liệu thời tiết cho vị trí này.";
       }
-      throw new Error(`HTTP error! status: ${response.status}`);
+
+      console.error("Weather API Error:", {
+        status: response.status,
+        statusText: response.statusText,
+        errorBody: errorText,
+        url: url.replace(WEATHER_API_KEY, "***"),
+      });
+
+      throw new Error(errorMessage);
     }
 
     const data = await response.json();
 
-    // Map Google weather type to icon code
-    const weatherType = data.weatherCondition?.type || 'CLEAR';
-    const iconCode = WEATHER_ICON_MAP[weatherType] || '01';
-    const isDaytime = data.isDaytime !== false;
-    const icon = `${iconCode}${isDaytime ? 'd' : 'n'}`;
+    console.log("✅ Weather API response:", data);
 
+    // Map OpenWeatherMap data to our format
     const weatherData = {
-      temperature: Math.round(data.temperature?.degrees || 0),
-      feelsLike: Math.round(data.feelsLikeTemperature?.degrees || 0),
-      humidity: data.relativeHumidity || 0,
-      windSpeed: Math.round(data.wind?.speed?.value || 0), // Already in km/h
-      description: data.weatherCondition?.description?.text || 'Unknown',
-      icon: icon,
-      main: weatherType,
-      pressure: Math.round(data.airPressure?.meanSeaLevelMillibars || 1013),
-      visibility: Math.round(data.visibility?.distance || 10), // Already in km
-      uvIndex: data.uvIndex || 0,
-      cloudCover: data.cloudCover || 0,
+      temperature: Math.round(data.main.temp),
+      feelsLike: Math.round(data.main.feels_like),
+      humidity: data.main.humidity,
+      windSpeed: Math.round((data.wind?.speed || 0) * 3.6), // Convert m/s to km/h
+      description: data.weather[0]?.description || "Unknown",
+      icon: data.weather[0]?.icon || "01d",
+      main: data.weather[0]?.main || "Clear",
+      pressure: Math.round(data.main.pressure),
+      visibility: Math.round((data.visibility || 10000) / 1000), // Convert m to km
+      uvIndex: 0, // OpenWeatherMap free tier doesn't include UV index
+      cloudCover: data.clouds?.all || 0,
       timestamp: Date.now(),
+      isMock: false, // Mark as real data
     };
+
+    console.log("✅ Processed weather data:", weatherData);
 
     // Cache the result
     weatherCache.set(cacheKey, {
@@ -85,10 +110,21 @@ export async function getWeatherByCoordinates(coordinates) {
 
     return weatherData;
   } catch (error) {
-    console.error('Error fetching weather data from Google API:', error);
+    console.error(
+      "❌ Error fetching weather data from OpenWeatherMap API:",
+      error
+    );
+    console.error("Error details:", {
+      message: error.message,
+      coordinates: { lat: coordinates.lat, lng: coordinates.lng },
+      apiKey: WEATHER_API_KEY
+        ? WEATHER_API_KEY.substring(0, 10) + "..."
+        : "NOT SET",
+    });
 
-    // Return mock data for development/fallback
-    return getMockWeatherData(coordinates);
+    // Always throw error to show in UI - don't silently fallback to mock
+    // User should know if API is not working
+    throw error;
   }
 }
 
@@ -103,7 +139,9 @@ export function getWeatherIconUrl(iconCode) {
 
 /**
  * Mock weather data for development/fallback
+ * @param {Object} coordinates - { lat: number, lng: number } (unused but kept for consistency)
  */
+// eslint-disable-next-line no-unused-vars
 function getMockWeatherData(coordinates) {
   const hour = new Date().getHours();
   const isDay = hour >= 6 && hour < 18;
@@ -113,9 +151,9 @@ function getMockWeatherData(coordinates) {
     feelsLike: Math.round(26 + Math.random() * 10),
     humidity: Math.round(60 + Math.random() * 30),
     windSpeed: Math.round(10 + Math.random() * 15),
-    description: isDay ? 'trời quang đãng' : 'trời quang, ít mây',
-    icon: isDay ? '01d' : '01n',
-    main: 'Clear',
+    description: isDay ? "trời quang đãng" : "trời quang, ít mây",
+    icon: isDay ? "01d" : "01n",
+    main: "Clear",
     pressure: 1013,
     visibility: 10,
     timestamp: Date.now(),
