@@ -232,6 +232,52 @@ export function unsubscribeFromUser(targetUserId) {
 }
 
 /**
+ * Send emergency alert (SOS) via STOMP
+ * @param {Object} alertData - { body, lat, lon, radius_m, ttl_min }
+ * @returns {Promise<boolean>} Send success
+ */
+export function sendAlert(alertData) {
+  return new Promise((resolve, reject) => {
+    if (!ws || !isConnected) {
+      reject(new Error("WebSocket not connected"));
+      return;
+    }
+
+    const { body, lat, lon, radius_m = 10000, ttl_min = 5 } = alertData;
+
+    if (!body || lat === undefined || lon === undefined) {
+      reject(new Error("Missing required alert fields"));
+      return;
+    }
+
+    const alert = {
+      action: "raise",
+      body: body,
+      lat: lat,
+      lon: lon,
+      radius_m: radius_m,
+      ttl_min: ttl_min,
+    };
+
+    const frame =
+      "SEND\n" +
+      "type:alert\n" +
+      "content-type:application/json\n\n" +
+      JSON.stringify(alert) +
+      STOMP_NULL;
+
+    try {
+      ws.send(frame);
+      console.log("[STOMP] >>> SENT Alert:", alert);
+      resolve(true);
+    } catch (error) {
+      console.error("[STOMP] Error sending alert:", error);
+      reject(error);
+    }
+  });
+}
+
+/**
  * Check if WebSocket is connected
  * @returns {boolean}
  */

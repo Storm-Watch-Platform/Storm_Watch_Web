@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>STOMP Raw Tester</title>
+    <style>
+        body { font-family: monospace; padding: 20px; }
+        #log { white-space: pre-line; background: #111; color: #0f0; padding: 10px; height: 400px; overflow-y: scroll; }
+        input, select { margin-right: 5px; }
+        .row { margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <h2>STOMP Raw Frame Tester</h2>
+
+    <!-- USER ID -->
+    <div class="row">
+        <b>Your User-ID:</b>
+        <input id="myUserId" placeholder="your-user-id">
+        <button onclick="updateUserId()">Set User-ID</button>
+    </div>
+
+    <!-- CONNECT -->
+    <div class="row">
+        <button onclick="connectWS()">1. CONNECT</button>
+    </div>
+
+    <!-- SUBSCRIBE -->
+    <div class="row">
+        <input id="subTarget" placeholder="Target user to follow">
+        <button onclick="subscribeUser()">2. SUBSCRIBE</button>
+        <button onclick="unsubscribeUser()">UNSUBSCRIBE</button>
+    </div>
+
+    <!-- SEND LOCATION -->
+    <h3>Send Location</h3>
+    <div class="row">
+        <input id="lat" placeholder="lat">
+        <input id="lon" placeholder="lon">
+        <input id="accuracy" placeholder="accuracy_m">
+        <select id="status">
+            <option value="SAFE">SAFE</option>
+            <option value="CAUTION">CAUTION</option>
+            <option value="DANGER">DANGER</option>
+            <option value="UNKNOWN" selected>UNKNOWN</option>
+        </select>
+        <button onclick="sendLocation()">SEND Location</button>
+    </div>
+
+    <!-- SEND REPORT -->
+    <h3>Send Report</h3>
+    <div class="row">
+        <input id="reportType" placeholder="type (FLOOD/FIRE/etc)">
+        <input id="reportDetail" placeholder="detail">
+        <input id="reportDesc" placeholder="description">
+        <input type="file" id="reportImage">
+        <input id="reportLat" placeholder="lat">
+        <input id="reportLon" placeholder="lon">
+        <button onclick="sendReport()">SEND Report</button>
+    </div>
+
+    <h3>Logs</h3>
+    <div id="log"></div>
+
+<script>
+let ws = null;
+let myUserID = "user_" + Math.floor(Math.random() * 100000);
+document.getElementById("myUserId").value = myUserID;
+
+function updateUserId() {
+    myUserID = document.getElementById("myUserId").value.trim();
+    log("✔ Updated User-ID = " + myUserID);
+}
+
+function log(msg) {
+    const el = document.getElementById("log");
+    el.textContent += msg + "\n";
+    el.scrollTop = el.scrollHeight;
+}
+
+// ---------------------- CONNECT ----------------------
+function connectWS() {
+    ws = new WebSocket("ws://localhost:8080/ws");
+
+    ws.onopen = () => {
+        log("WS connected, sending STOMP CONNECT frame...");
+        let frame =
+            "CONNECT\n" +
+            "accept-version:1.2\n" +
+            `user-id:${myUserID}\n\n` +
+            "\x00";
+        ws.send(frame);
+        log(">>> SENT CONNECT\n" + frame.replace(/\x00/g, "<NUL>"));
+    };
+
+    ws.onmessage = (ev) => log("<<< RECEIVED\n" + ev.data.replace(/\x00/g, "<NUL>"));
+    ws.onclose = () => log("WS closed");
+    ws.onerror = (e) => log("WS error: " + e);
+}
+
+// ---------------------- SUBSCRIBE ----------------------
+function subscribeUser() {
+    const target = document.getElementById("subTarget").value.trim();
+    if (!target) return log("❌ Missing target-user");
+    let frame =
+        "SUBSCRIBE\n" +
+        `target-user:${target}\n\n` +
+        "\x00";
+    ws.send(frame);
+    log(">>> SENT SUBSCRIBE\n" + frame.replace(/\x00/g, "<NUL>"));
+}
+
+function unsubscribeUser() {
+    const target = document.getElementById("subTarget").value.trim();
+    if (!target) return log("❌ Missing target-user");
+    let frame =
+        "UNSUBSCRIBE\n" +
+        `target-user:${target}\n\n` +
+        "\x00";
+    ws.send(frame);
+    log(">>> SENT UNSUBSCRIBE\n" + frame.replace(/\x00/g, "<NUL>"));
+}
+
+// ---------------------- SEND LOCATION ----------------------
+function sendLocation() {
+    let lat = parseFloat(document.getElementById("lat").value);
+    let lon = parseFloat(document.getElementById("lon").value);
+    let accuracy = parseFloat(document.getElementById("accuracy").value || "0");
+    let status = document.getElementById("status").value || "UNKNOWN";
+
+    if (isNaN(lat) || isNaN(lon)) return log("❌ Invalid lat/lon");
+
+    let loc = {
+        Lat: lat,
+        Lon: lon,
+        AccuracyM: accuracy,
+        Status: status,
+        UpdatedAt: Date.now()
+    };
+
+    let frame =
+        "SEND\n" +
+        "type:location\n" +
+        "content-type:application/json\n\n" +
+        JSON.stringify(loc) +
+        "\x00";
+
+    ws.send(frame);
+    log(">>> SENT Location\n" + frame.replace(/\x00/g, "<NUL>"));
+}
+
+// ---------------------- SEND REPORT ----------------------
+function sendReport() {
+    const type = document.getElementById("reportType").value.trim();
+    const detail = document.getElementById("reportDetail").value.trim();
+    const desc = document.getElementById("reportDesc").value.trim();
+    const fileInput = document.getElementById("reportImage");
+    const lat = parseFloat(document.getElementById("reportLat").value);
+    const lon = parseFloat(document.getElementById("reportLon").value);
+
+    if (!type || !detail || !desc || isNaN(lat) || isNaN(lon)) {
+        return log("❌ Missing report fields or invalid lat/lon");
+    }
+
+    // REPORT structure — lowercase JSON keys
+    let report = {
+        type: type,
+        detail: detail,
+        description: desc,
+        image: "",         // lowercase
+        lat: lat,
+        lon: lon,
+        timestamp: Date.now()
+    };
+
+    if (fileInput.files.length > 0) {
+        const reader = new FileReader();
+
+        reader.onload = function(e) {
+            const base64 = e.target.result.split(",")[1];
+
+            // ❗ FIX CRITICAL: Normalize Base64 to remove NULL bytes
+            report.image = btoa(atob(base64));
+
+            sendReportFrame(report);
+        }
+
+        reader.readAsDataURL(fileInput.files[0]);
+
+    } else {
+        sendReportFrame(report);
+    }
+}
+
+function sendReportFrame(report) {
+    let frame =
+        "SEND\n" +
+        "type:report\n" +
+        "content-type:application/json\n\n" +
+        JSON.stringify(report) +
+        "\x00";
+
+    ws.send(frame);
+    log(">>> SENT Report\n" + frame.replace(/\x00/g, "<NUL>"));
+}
+
+
+function sendReportFrame(report) {
+    let frame =
+        "SEND\n" +
+        "type:report\n" +
+        "content-type:application/json\n\n" +
+        JSON.stringify(report) +
+        "\x00";
+
+    ws.send(frame);
+    log(">>> SENT Report\n" + frame.replace(/\x00/g, "<NUL>"));
+}
+</script>
+</body>
+</html>

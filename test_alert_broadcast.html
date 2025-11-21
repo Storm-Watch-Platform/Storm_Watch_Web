@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>STOMP Alert + Location Tester</title>
+<style>
+body { font-family: monospace; padding: 20px; }
+#log { white-space: pre-line; background: #111; color: #0f0; padding: 10px; height: 400px; overflow-y: scroll; }
+input, select { margin-right: 5px; }
+.row { margin-bottom: 10px; }
+</style>
+</head>
+<body>
+<h2>STOMP Alert + Location Tester</h2>
+
+<!-- USER ID -->
+<div class="row">
+  <b>Your User-ID:</b>
+  <input id="myUserId" placeholder="your-user-id">
+  <button onclick="updateUserId()">Set User-ID</button>
+</div>
+
+<!-- CONNECT -->
+<div class="row">
+  <button onclick="connectWS()">1. CONNECT</button>
+</div>
+
+<!-- SUBSCRIBE -->
+<div class="row">
+  <input id="subTarget" placeholder="Target user to follow">
+  <button onclick="subscribeUser()">2. SUBSCRIBE</button>
+  <button onclick="unsubscribeUser()">UNSUBSCRIBE</button>
+</div>
+
+<!-- SEND LOCATION -->
+<h3>Send Location</h3>
+<div class="row">
+  <input id="lat" placeholder="lat">
+  <input id="lon" placeholder="lon">
+  <input id="accuracy" placeholder="accuracy_m">
+  <select id="status">
+    <option value="SAFE">SAFE</option>
+    <option value="CAUTION">CAUTION</option>
+    <option value="DANGER">DANGER</option>
+    <option value="UNKNOWN" selected>UNKNOWN</option>
+  </select>
+  <button onclick="sendLocation()">SEND Location</button>
+</div>
+
+<!-- RAISE ALERT -->
+<h3>Raise Alert</h3>
+<div class="row">
+  <input id="alertBody" placeholder="alert body">
+  <input id="alertLat" placeholder="lat">
+  <input id="alertLon" placeholder="lon">
+  <input id="alertRadius" placeholder="radius_m">
+  <input id="alertTTL" placeholder="ttl_min">
+  <button onclick="raiseAlert()">RAISE ALERT</button>
+</div>
+
+<h3>Logs</h3>
+<div id="log"></div>
+
+<script>
+let ws = null;
+let myUserID = "user_" + Math.floor(Math.random() * 100000);
+document.getElementById("myUserId").value = myUserID;
+
+function log(msg) {
+    const el = document.getElementById("log");
+    el.textContent += msg + "\n";
+    el.scrollTop = el.scrollHeight;
+}
+
+function updateUserId() {
+    myUserID = document.getElementById("myUserId").value.trim();
+    log("✔ Updated User-ID = " + myUserID);
+}
+
+// ---------------------- CONNECT ----------------------
+function connectWS() {
+    ws = new WebSocket("ws://localhost:8080/ws");
+
+    ws.onopen = () => {
+        log("WS connected, sending STOMP CONNECT frame...");
+        let frame = "CONNECT\naccept-version:1.2\nuser-id:" + myUserID + "\n\n\x00";
+        ws.send(frame);
+        log(">>> SENT CONNECT\n" + frame.replace(/\x00/g, "<NUL>"));
+    };
+
+    ws.onmessage = (ev) => log("<<< RECEIVED\n" + ev.data.replace(/\x00/g, "<NUL>"));
+    ws.onclose = () => log("WS closed");
+    ws.onerror = (e) => log("WS error: " + e);
+}
+
+// ---------------------- SUBSCRIBE ----------------------
+function subscribeUser() {
+    const target = document.getElementById("subTarget").value.trim();
+    if (!target) return log("❌ Missing target-user");
+    let frame = "SUBSCRIBE\ntarget-user:" + target + "\n\n\x00";
+    ws.send(frame);
+    log(">>> SENT SUBSCRIBE\n" + frame.replace(/\x00/g, "<NUL>"));
+}
+
+function unsubscribeUser() {
+    const target = document.getElementById("subTarget").value.trim();
+    if (!target) return log("❌ Missing target-user");
+    let frame = "UNSUBSCRIBE\ntarget-user:" + target + "\n\n\x00";
+    ws.send(frame);
+    log(">>> SENT UNSUBSCRIBE\n" + frame.replace(/\x00/g, "<NUL>"));
+}
+
+// ---------------------- SEND LOCATION ----------------------
+function sendLocation() {
+    let lat = parseFloat(document.getElementById("lat").value);
+    let lon = parseFloat(document.getElementById("lon").value);
+    let accuracy = parseFloat(document.getElementById("accuracy").value || "0");
+    let status = document.getElementById("status").value || "UNKNOWN";
+    if (isNaN(lat) || isNaN(lon)) return log("❌ Invalid lat/lon");
+
+    let loc = {
+        Lat: lat,
+        Lon: lon,
+        AccuracyM: accuracy,
+        Status: status,
+        UpdatedAt: Date.now()
+    };
+
+    let frame = "SEND\ntype:location\ncontent-type:application/json\n\n" + JSON.stringify(loc) + "\x00";
+    ws.send(frame);
+    log(">>> SENT Location\n" + frame.replace(/\x00/g, "<NUL>"));
+}
+
+// ---------------------- RAISE ALERT ----------------------
+function raiseAlert() {
+    const body = document.getElementById("alertBody").value.trim();
+    const lat = parseFloat(document.getElementById("alertLat").value);
+    const lon = parseFloat(document.getElementById("alertLon").value);
+    const radius = parseFloat(document.getElementById("alertRadius").value || "10000");
+    const ttl = parseInt(document.getElementById("alertTTL").value || "5");
+
+    if (!body || isNaN(lat) || isNaN(lon)) return log("❌ Missing fields or invalid lat/lon");
+
+    const alert = {
+        action: "raise",
+        body: body,
+        lat: lat,
+        lon: lon,
+        radius_m: radius,
+        ttl_min: ttl
+    };
+
+    let frame = "SEND\ntype:alert\ncontent-type:application/json\n\n" + JSON.stringify(alert) + "\x00";
+    ws.send(frame);
+    log(">>> SENT Alert\n" + frame.replace(/\x00/g, "<NUL>"));
+}
+</script>
+</body>
+</html>

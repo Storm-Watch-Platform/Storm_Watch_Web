@@ -1,5 +1,6 @@
 // SOS Service - Mock API
 import { mockSOSSignals, createSOSSignal, getSOSSignalsNearby } from '../data/mockSOS';
+import { sendAlert, isSTOMPConnected } from './stompService';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api';
 
@@ -30,6 +31,25 @@ export async function sendSOS(location, message = '') {
     }
 
     const data = await response.json();
+
+    // 🚀 Broadcast real-time qua WebSocket STOMP (nếu đã connect)
+    if (isSTOMPConnected()) {
+      try {
+        await sendAlert({
+          body: message || "SOS - Cần cứu trợ khẩn cấp!",
+          lat: location.lat,
+          lon: location.lng,
+          radius_m: 10000,
+          ttl_min: 5
+        });
+        console.log('✅ SOS broadcast via WebSocket STOMP');
+      } catch (wsError) {
+        console.warn('⚠️ WebSocket broadcast failed, but SOS saved to server:', wsError);
+      }
+    } else {
+      console.warn('⚠️ WebSocket not connected, SOS saved but not broadcasted');
+    }
+
     return data.data || data;
   } catch (error) {
     console.error('Error sending SOS:', error);

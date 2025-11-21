@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { isAuthenticated } from './services/authService';
+import { connectSTOMP, disconnectSTOMP } from './services/stompService';
 import Home from './pages/Home';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -19,6 +20,32 @@ function ProtectedRoute({ children }) {
 }
 
 function App() {
+  // Global WebSocket connection - connect once when app loads
+  useEffect(() => {
+    const userId = localStorage.getItem('userId');
+
+    if (userId) {
+      console.log('[App] Connecting to WebSocket with userId:', userId);
+      connectSTOMP(userId)
+        .then(() => {
+          console.log('✅ [App] Global WebSocket connected successfully');
+        })
+        .catch((error) => {
+          console.error('❌ [App] WebSocket connection failed:', error);
+        });
+    } else {
+      console.log('[App] No userId found, skipping WebSocket connection');
+    }
+
+    // Cleanup: disconnect when app unmounts
+    return () => {
+      if (userId) {
+        console.log('[App] Disconnecting WebSocket');
+        disconnectSTOMP();
+      }
+    };
+  }, []); // Run once on mount
+
   return (
     <Router>
       <Routes>
