@@ -1,30 +1,45 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Phone, Loader, AlertCircle } from 'lucide-react';
+import { Phone, Loader, AlertCircle, Lock } from 'lucide-react';
 import { login } from '../services/authService';
 import { validatePhone, normalizePhone } from '../utils/validators';
 
 export default function Login() {
-  const [phone, setPhone] = useState('');
+  const [formData, setFormData] = useState({
+    phone: '',
+    password: '',
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
+
+  const handleChange = (e) => {
+    setFormData({
+      ...formData,
+      [e.target.name]: e.target.value,
+    });
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
-    const normalizedPhone = normalizePhone(phone);
+    const normalizedPhone = normalizePhone(formData.phone);
     if (!validatePhone(normalizedPhone)) {
       setError('Số điện thoại không hợp lệ. Vui lòng nhập số điện thoại Việt Nam.');
       return;
     }
 
+    if (!formData.password) {
+      setError('Vui lòng nhập mật khẩu.');
+      return;
+    }
+
     setLoading(true);
     try {
-      const result = await login(normalizedPhone);
+      const result = await login(normalizedPhone, formData.password);
       if (result.success) {
-        navigate('/verify-otp', { state: { phone: normalizedPhone } });
+        navigate('/');
       } else {
         setError(result.message || 'Đăng nhập thất bại');
       }
@@ -61,18 +76,36 @@ export default function Login() {
                 <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
                 <input
                   id="phone"
+                  name="phone"
                   type="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
+                  value={formData.phone}
+                  onChange={handleChange}
                   placeholder="0901234567 hoặc +84901234567"
                   className="w-full pl-10 pr-4 py-3 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   required
                   disabled={loading}
                 />
               </div>
-              <p className="mt-2 text-xs text-slate-400">
-                Chúng tôi sẽ gửi mã OTP đến số điện thoại của bạn
-              </p>
+            </div>
+
+            <div>
+              <label htmlFor="password" className="block text-sm font-medium text-slate-300 mb-2">
+                Mật khẩu
+              </label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
+                <input
+                  id="password"
+                  name="password"
+                  type="password"
+                  value={formData.password}
+                  onChange={handleChange}
+                  placeholder="Nhập mật khẩu"
+                  className="w-full pl-10 pr-4 py-3 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  required
+                  disabled={loading}
+                />
+              </div>
             </div>
 
             <button
@@ -86,7 +119,7 @@ export default function Login() {
                   <span>Đang xử lý...</span>
                 </>
               ) : (
-                'Gửi mã OTP'
+                'Đăng nhập'
               )}
             </button>
           </form>
