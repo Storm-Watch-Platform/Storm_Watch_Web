@@ -6,68 +6,112 @@ const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API !== 'false'; // Default t
 const mockOTPStore = new Map();
 
 /**
- * Login with phone number (sends OTP)
+ * Login with phone number and password
  * @param {string} phone - Phone number
- * @returns {Promise<Object>} { success: boolean, message: string }
+ * @param {string} password - Password
+ * @returns {Promise<Object>} { success: boolean, message?: string, accessToken?: string, refreshToken?: string }
  */
-export async function login(phone) {
+export async function login(phone, password) {
   // Use mock API by default in development
   if (USE_MOCK_API) {
-    return getMockLogin(phone);
+    return getMockLogin(phone, password);
   }
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
-    const response = await fetch(`${API_BASE_URL}/auth/login`, {
+    const response = await fetch(`${API_BASE_URL}/login`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ phone }),
+      body: JSON.stringify({ phone, password }),
       signal: controller.signal,
     });
 
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      const errorData = await response.json().catch(() => ({}));
+      return {
+        success: false,
+        message: errorData.message || `HTTP error! status: ${response.status}`,
+      };
     }
 
     const data = await response.json();
-    return data;
+    
+    // Store tokens and user info
+    if (data.accessToken) {
+      localStorage.setItem('token', data.accessToken);
+      if (data.refreshToken) {
+        localStorage.setItem('refreshToken', data.refreshToken);
+      }
+      
+      // Use userID from response if available, otherwise decode from JWT
+      if (data.userID) {
+        localStorage.setItem('userId', data.userID);
+      } else {
+        // Fallback: Decode JWT to get user info (basic decode, no verification)
+        try {
+          const tokenPayload = JSON.parse(atob(data.accessToken.split('.')[1]));
+          localStorage.setItem('userId', tokenPayload.id || tokenPayload.userId || '');
+        } catch (e) {
+          localStorage.setItem('userId', '');
+        }
+      }
+      
+      // Decode JWT to get user name if not in response
+      try {
+        const tokenPayload = JSON.parse(atob(data.accessToken.split('.')[1]));
+        localStorage.setItem('userName', tokenPayload.name || '');
+        localStorage.setItem('userPhone', phone);
+      } catch (e) {
+        localStorage.setItem('userName', '');
+        localStorage.setItem('userPhone', phone);
+      }
+    }
+
+    return {
+      success: true,
+      accessToken: data.accessToken,
+      refreshToken: data.refreshToken,
+      userID: data.userID,
+    };
   } catch (error) {
     // Silently fallback to mock if connection fails (development mode)
     if (error.name === 'AbortError' || error.message.includes('Failed to fetch')) {
       console.log('[Auth] Backend không khả dụng, sử dụng mock API');
-      return getMockLogin(phone);
+      return getMockLogin(phone, password);
     }
     console.error('Error logging in:', error);
-    // Return mock OTP as fallback
-    return getMockLogin(phone);
+    return {
+      success: false,
+      message: error.message || 'Có lỗi xảy ra khi đăng nhập',
+    };
   }
 }
 
 /**
- * Get mock login (generate OTP)
+ * Get mock login (for development)
  */
-function getMockLogin(phone) {
+function getMockLogin(phone, password) {
   return new Promise((resolve) => {
     setTimeout(() => {
-      // Generate 6-digit OTP
-      const otp = Math.floor(100000 + Math.random() * 900000).toString();
-      mockOTPStore.set(phone, {
-        otp,
-        expiresAt: Date.now() + 5 * 60 * 1000, // 5 minutes
-      });
+      const mockToken = `mock_token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const mockRefreshToken = `mock_refresh_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-      console.log(`[MOCK] OTP for ${phone}: ${otp}`); // For development
+      localStorage.setItem('token', mockToken);
+      localStorage.setItem('refreshToken', mockRefreshToken);
+      localStorage.setItem('userId', `user_${phone.replace(/\D/g, '')}`);
+      localStorage.setItem('userName', 'Người dùng');
+      localStorage.setItem('userPhone', phone);
 
       resolve({
         success: true,
-        message: 'OTP đã được gửi đến số điện thoại của bạn',
-        otp: otp, // Only in mock, remove in production
+        accessToken: mockToken,
+        refreshToken: mockRefreshToken,
       });
     }, 1000);
   });
@@ -186,46 +230,122 @@ function getMockVerifyOTP(phone, otp) {
 
 /**
  * Register new user
- * @param {Object} payload - { phone, name, email? }
- * @returns {Promise<Object>} { success: boolean, message: string }
+ * @param {Object} payload - { phone, name, password }
+ * @returns {Promise<Object>} { success: boolean, message?: string, accessToken?: string, refreshToken?: string }
  */
 export async function register(payload) {
   // Use mock API by default in development
   if (USE_MOCK_API) {
-    return getMockLogin(payload.phone);
+    return getMockRegister(payload);
   }
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
-    const response = await fetch(`${API_BASE_URL}/auth/register`, {
+    const response = await fetch(`${API_BASE_URL}/signup`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        name: payload.name,
+        phone: payload.phone,
+        password: payload.password,
+      }),
       signal: controller.signal,
     });
 
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      const errorData = await response.json().catch(() => ({}));
+      return {
+        success: false,
+        message: errorData.message || `HTTP error! status: ${response.status}`,
+      };
     }
 
     const data = await response.json();
-    return data;
+    
+    // Store tokens and user info
+    if (data.accessToken) {
+      localStorage.setItem('token', data.accessToken);
+      if (data.refreshToken) {
+        localStorage.setItem('refreshToken', data.refreshToken);
+      }
+      
+      // Use userID from response if available, otherwise decode from JWT
+      if (data.userID) {
+        localStorage.setItem('userId', data.userID);
+      } else {
+        // Fallback: Decode JWT to get user info (basic decode, no verification)
+        try {
+          const tokenPayload = JSON.parse(atob(data.accessToken.split('.')[1]));
+          localStorage.setItem('userId', tokenPayload.id || tokenPayload.userId || '');
+        } catch (e) {
+          localStorage.setItem('userId', '');
+        }
+      }
+      
+      // Decode JWT to get user name if not in response
+      try {
+        const tokenPayload = JSON.parse(atob(data.accessToken.split('.')[1]));
+        localStorage.setItem('userName', tokenPayload.name || payload.name);
+        localStorage.setItem('userPhone', payload.phone);
+      } catch (e) {
+        localStorage.setItem('userName', payload.name);
+        localStorage.setItem('userPhone', payload.phone);
+      }
+    }
+
+    return {
+      success: true,
+      accessToken: data.accessToken,
+      refreshToken: data.refreshToken,
+      userID: data.userID,
+    };
   } catch (error) {
     // Silently fallback to mock if connection fails (development mode)
     if (error.name === 'AbortError' || error.message.includes('Failed to fetch')) {
       console.log('[Auth] Backend không khả dụng, sử dụng mock API');
-      return getMockLogin(payload.phone);
+      return getMockRegister(payload);
     }
     console.error('Error registering:', error);
-    // Return mock registration (same as login, sends OTP)
-    return getMockLogin(payload.phone);
+    return {
+      success: false,
+      message: error.message || 'Có lỗi xảy ra khi đăng ký',
+    };
   }
+}
+
+/**
+ * Get mock register (for development)
+ */
+function getMockRegister(payload) {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      const mockToken = `mock_token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const mockRefreshToken = `mock_refresh_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const mockUser = {
+        id: `user_${payload.phone.replace(/\D/g, '')}`,
+        name: payload.name,
+        phone: payload.phone,
+      };
+
+      localStorage.setItem('token', mockToken);
+      localStorage.setItem('refreshToken', mockRefreshToken);
+      localStorage.setItem('userId', mockUser.id);
+      localStorage.setItem('userName', mockUser.name);
+      localStorage.setItem('userPhone', mockUser.phone);
+
+      resolve({
+        success: true,
+        accessToken: mockToken,
+        refreshToken: mockRefreshToken,
+      });
+    }, 1000);
+  });
 }
 
 /**
@@ -233,6 +353,7 @@ export async function register(payload) {
  */
 export function logout() {
   localStorage.removeItem('token');
+  localStorage.removeItem('refreshToken');
   localStorage.removeItem('userId');
   localStorage.removeItem('userName');
   localStorage.removeItem('userPhone');
