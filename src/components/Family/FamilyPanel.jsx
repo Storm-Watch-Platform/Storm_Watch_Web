@@ -1,5 +1,5 @@
 import React from 'react';
-import { Users, MapPin, Clock, AlertCircle } from 'lucide-react';
+import { Users, MapPin, Clock, AlertCircle, Phone } from 'lucide-react';
 import { formatRelativeTime } from '../../utils/formatTime';
 
 const statusColors = {
@@ -64,17 +64,30 @@ export default function FamilyPanel({ family }) {
                 </span>
               </div>
               <div className="space-y-2 text-sm">
-                {member.location && (
+                {member.phone && (
+                  <div className="flex items-center gap-2 text-blue-700">
+                    <Phone className="w-4 h-4 text-blue-500" />
+                    <span className="truncate">{member.phone}</span>
+                  </div>
+                )}
+                {member.location && member.location.lat && member.location.lng ? (
                   <div className="flex items-center gap-2 text-blue-700">
                     <MapPin className="w-4 h-4 text-blue-500" />
                     <span className="truncate font-mono text-xs">
-                      {member.location.lat.toFixed(4)}, {member.location.lng.toFixed(4)}
+                      {member.location.lat.toFixed(6)}, {member.location.lng.toFixed(6)}
                     </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-gray-500">
+                    <MapPin className="w-4 h-4 text-gray-400" />
+                    <span className="text-xs">Không xác định</span>
                   </div>
                 )}
                 <div className="flex items-center gap-2 text-blue-600">
                   <Clock className="w-4 h-4 text-blue-500" />
-                  <span>{formatRelativeTime(member.lastSeen)}</span>
+                  <span className="text-xs">
+                    {member.lastSeen ? formatRelativeTime(member.lastSeen) : "Không xác định"}
+                  </span>
                 </div>
               </div>
             </div>

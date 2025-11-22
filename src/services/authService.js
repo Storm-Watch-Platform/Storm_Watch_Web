@@ -8,6 +8,53 @@ const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API === "true"; // Only use m
 const mockOTPStore = new Map();
 
 /**
+ * Get valid token from localStorage
+ */
+function getValidToken() {
+  return localStorage.getItem("token");
+}
+
+/**
+ * Get user profile from backend
+ * @returns {Promise<Object|null>} Profile object or null
+ */
+async function getProfile() {
+  try {
+    const token = getValidToken();
+    if (!token) {
+      throw new Error("Authentication required");
+    }
+
+    const response = await fetch(`${API_BASE_URL}/profile`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (response.status === 404) {
+      console.log("ℹ️ [Auth] Profile not found (404)");
+      return null;
+    }
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(
+        errorData.message || `HTTP error! status: ${response.status}`
+      );
+    }
+
+    const data = await response.json();
+    console.log("✅ [Auth] Profile fetched:", data);
+    return data;
+  } catch (error) {
+    console.error("❌ [Auth] Error fetching profile:", error);
+    throw error;
+  }
+}
+
+/**
  * Login with phone number and password
  * @param {string} phone - Phone number
  * @param {string} password - Password
@@ -98,6 +145,32 @@ export async function login(phone, password) {
       } catch {
         localStorage.setItem("userName", "Người dùng");
         localStorage.setItem("userPhone", normalizedPhone);
+      }
+
+      // Fetch profile to cache phone, name, and userId from backend
+      try {
+        const profile = await getProfile();
+        if (profile) {
+          if (profile.name) {
+            localStorage.setItem("userName", profile.name);
+          }
+          if (profile.phone) {
+            localStorage.setItem("userPhone", profile.phone);
+          }
+          // Cache userId from profile (this is the correct ID to match with SOS UserID)
+          if (profile.id) {
+            localStorage.setItem("userId", profile.id);
+            console.log("✅ [Auth] UserId cached from profile:", profile.id);
+          }
+          console.log("✅ [Auth] Profile cached:", {
+            id: profile.id,
+            name: profile.name,
+            phone: profile.phone,
+          });
+        }
+      } catch (profileError) {
+        console.warn("⚠️ [Auth] Failed to fetch profile, using JWT data:", profileError);
+        // Continue with JWT data if profile fetch fails
       }
     }
 
@@ -358,6 +431,32 @@ export async function register(payload) {
       } catch {
         localStorage.setItem("userName", payload.name);
         localStorage.setItem("userPhone", normalizedPhone);
+      }
+
+      // Fetch profile to cache phone, name, and userId from backend
+      try {
+        const profile = await getProfile();
+        if (profile) {
+          if (profile.name) {
+            localStorage.setItem("userName", profile.name);
+          }
+          if (profile.phone) {
+            localStorage.setItem("userPhone", profile.phone);
+          }
+          // Cache userId from profile (this is the correct ID to match with SOS UserID)
+          if (profile.id) {
+            localStorage.setItem("userId", profile.id);
+            console.log("✅ [Auth] UserId cached from profile after register:", profile.id);
+          }
+          console.log("✅ [Auth] Profile cached after register:", {
+            id: profile.id,
+            name: profile.name,
+            phone: profile.phone,
+          });
+        }
+      } catch (profileError) {
+        console.warn("⚠️ [Auth] Failed to fetch profile after register, using form data:", profileError);
+        // Continue with form data if profile fetch fails
       }
     }
 

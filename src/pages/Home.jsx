@@ -11,6 +11,7 @@ import MapView from "../components/Map/MapView";
 import ReportsPanel from "../components/Reports/ReportsPanel";
 import SearchLocation from "../components/Location/SearchLocation";
 import ReportModal from "../components/Reports/ReportModal";
+import SOSDetailModal from "../components/SOS/SOSDetailModal";
 import WeatherWidget from "../components/Weather/WeatherWidget";
 import { queryZoneByCoordinates, getNearbySOS } from "../services/api";
 import { getWeatherByCoordinates } from "../services/weatherService";
@@ -43,6 +44,7 @@ function Home() {
   const [nearbySOS, setNearbySOS] = useState([]);
   const [sosLoading, setSosLoading] = useState(false);
   const [showSOSModal, setShowSOSModal] = useState(false);
+  const [selectedSOS, setSelectedSOS] = useState(null);
   const userSelectedRef = useRef(false);
   const mapsScriptLoadedRef = useRef(false);
 
@@ -512,9 +514,21 @@ function Home() {
     setSosLoading(true);
     try {
       console.log("🔔 [Home] Fetching nearby SOS for:", coordinates);
-      const sosList = await getNearbySOS(coordinates, 5); // 5km radius
+      const sosList = await getNearbySOS(coordinates, 10); // 10km radius
+
+      // Filter out RESOLVED/SOLVED SOS - only show active/RAISED SOS
+      const activeSOS = (sosList || []).filter((sos) => {
+        const status = sos.Status || sos.status || "";
+        return status !== "SOLVED" && status !== "RESOLVED";
+      });
+
       console.log("✅ [Home] Nearby SOS fetched:", sosList.length, "signals");
-      setNearbySOS(sosList || []);
+      console.log(
+        "✅ [Home] Active SOS (filtered):",
+        activeSOS.length,
+        "signals"
+      );
+      setNearbySOS(activeSOS);
     } catch (error) {
       console.error("❌ [Home] Error fetching nearby SOS:", error);
       setNearbySOS([]);
@@ -536,6 +550,26 @@ function Home() {
       fetchNearbySOS(centerLocation);
     }
     setShowSOSModal(true);
+  };
+
+  const handleSOSMarkerClick = (sos) => {
+    setSelectedSOS(sos);
+  };
+
+  const handleSOSStatusUpdate = (alertId, newStatus) => {
+    // Update local state and filter out RESOLVED/SOLVED SOS
+    setNearbySOS((prev) => {
+      const updated = prev.map((sos) =>
+        sos.alertId === alertId || sos.id === alertId
+          ? { ...sos, Status: newStatus }
+          : sos
+      );
+      // Filter out RESOLVED/SOLVED SOS - they should not appear anymore
+      return updated.filter((sos) => {
+        const status = sos.Status || sos.status || "";
+        return status !== "SOLVED" && status !== "RESOLVED";
+      });
+    });
   };
 
   return (
@@ -690,7 +724,9 @@ function Home() {
                 centerLocation={centerLocation}
                 userLocation={userLocation}
                 reports={reports}
+                nearbySOS={nearbySOS}
                 onMarkerClick={handleMarkerClick}
+                onSOSMarkerClick={handleSOSMarkerClick}
                 highlightedReport={highlightedReport}
               />
             </div>
@@ -714,6 +750,13 @@ function Home() {
         report={selectedReport}
         onClose={() => setSelectedReport(null)}
       />
+      {selectedSOS && (
+        <SOSDetailModal
+          sos={selectedSOS}
+          onClose={() => setSelectedSOS(null)}
+          onStatusUpdate={handleSOSStatusUpdate}
+        />
+      )}
     </div>
   );
 }

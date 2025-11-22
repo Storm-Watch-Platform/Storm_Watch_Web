@@ -172,12 +172,18 @@ export function sendLocation(locationData) {
 
     const { lat, lon, accuracy = 0, status = "UNKNOWN" } = locationData;
 
+    // Get cached phone and name from localStorage
+    const userName = localStorage.getItem("userName") || "";
+    const userPhone = localStorage.getItem("userPhone") || "";
+
     const location = {
       Lat: lat,
       Lon: lon,
       AccuracyM: accuracy,
       Status: status,
       UpdatedAt: Date.now(),
+      Name: userName, // Capital N (theo file test mới nhất)
+      Phone: userPhone,
     };
 
     const frame =
@@ -367,6 +373,10 @@ export function sendReport(reportData) {
       return;
     }
 
+    // Get cached phone and name from localStorage
+    const userName = localStorage.getItem("userName") || "";
+    const userPhone = localStorage.getItem("userPhone") || "";
+
     const report = {
       type: type, // Category (e.g., "FLOOD", "FIRE", etc.)
       detail: detail, // Sub-category (e.g., "Mưa lớn", "Đường ngập nước")
@@ -374,6 +384,8 @@ export function sendReport(reportData) {
       image: image || "", // Base64 encoded image
       lat: lat, // Latitude
       lon: lon, // Longitude
+      user_name: userName, // User name from cached profile
+      phone_number: userPhone, // Phone number from cached profile
       timestamp: Date.now(), // Timestamp
     };
 
@@ -454,6 +466,10 @@ export function sendAlert(alertData) {
       return;
     }
 
+    // Get cached phone and name from localStorage
+    const userName = localStorage.getItem("userName") || "";
+    const userPhone = localStorage.getItem("userPhone") || "";
+
     const alert = {
       action: "raise",
       body: body,
@@ -461,6 +477,8 @@ export function sendAlert(alertData) {
       lon: lon,
       radius_m: radius_m,
       ttl_min: ttl_min,
+      user_name: userName, // snake_case (giống report)
+      phone_number: userPhone, // snake_case (giống report)
     };
 
     const frame =
@@ -481,6 +499,50 @@ export function sendAlert(alertData) {
       resolve(true);
     } catch (error) {
       console.error("❌ [STOMP SOS/ALERT] Error sending alert:", error);
+      reject(error);
+    }
+  });
+}
+
+/**
+ * Resolve alert via STOMP (change status from RAISED to SOLVED)
+ * @param {string} alertId - Alert ID
+ * @returns {Promise<boolean>} Send success
+ */
+export function sendAlertStatusUpdate(alertId) {
+  return new Promise((resolve, reject) => {
+    if (!ws || !isConnected) {
+      reject(new Error("WebSocket not connected"));
+      return;
+    }
+
+    if (!alertId) {
+      reject(new Error("Missing required field: alertId"));
+      return;
+    }
+
+    const alert = {
+      action: "resolve",
+      alertId: alertId,
+    };
+
+    const frame =
+      "SEND\n" +
+      "type:alert\n" +
+      "content-type:application/json\n\n" +
+      JSON.stringify(alert) +
+      STOMP_NULL;
+
+    try {
+      ws.send(frame);
+      console.log(
+        "🔄 [STOMP ALERT] >>> SENT Resolve Alert:",
+        `alertId: ${alertId}`
+      );
+      console.log("🔄 [STOMP ALERT] Full payload:", alert);
+      resolve(true);
+    } catch (error) {
+      console.error("❌ [STOMP ALERT] Error sending resolve alert:", error);
       reject(error);
     }
   });

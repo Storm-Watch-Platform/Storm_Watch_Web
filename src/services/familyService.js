@@ -183,16 +183,52 @@ export async function getFamilyById(groupId) {
     const data = await response.json();
     console.log(`✅ [Family] Group details fetched:`, data);
 
+    // Fetch member details for all members
+    const memberPromises = (data.memberIDs || []).map(
+      async (memberId, index) => {
+        try {
+          const memberDetails = await getMemberDetails(groupId, memberId);
+          if (memberDetails) {
+            return {
+              ...memberDetails,
+              role: index === 0 ? "owner" : "member",
+            };
+          }
+          // Fallback if member details not found
+          return {
+            id: memberId,
+            name: `Member ${index + 1}`,
+            phone: "",
+            location: null,
+            status: "safe",
+            role: index === 0 ? "owner" : "member",
+          };
+        } catch (error) {
+          console.warn(
+            `⚠️ [Family] Failed to fetch details for member ${memberId}:`,
+            error
+          );
+          // Fallback if fetch fails
+          return {
+            id: memberId,
+            name: `Member ${index + 1}`,
+            phone: "",
+            location: null,
+            status: "safe",
+            role: index === 0 ? "owner" : "member",
+          };
+        }
+      }
+    );
+
+    const members = await Promise.all(memberPromises);
+
     // Transform backend response to match frontend format
     return {
       id: data.id,
       name: data.name,
       inviteCode: data.inviteCode,
-      members: (data.memberIDs || []).map((memberId, index) => ({
-        id: memberId,
-        name: `Member ${index + 1}`, // Will need to fetch member details separately if needed
-        role: index === 0 ? "owner" : "member",
-      })),
+      members: members,
       memberIDs: data.memberIDs || [],
       createdAt: data.createdAt,
       expiresAt: data.expiresAt,
@@ -320,65 +356,84 @@ export async function joinGroup(inviteCode) {
 }
 
 /**
- * Add member to family
- * @param {string} familyId - Family ID
- * @param {Object} member - Member data { name, phone }
- * @returns {Promise<Object>} Updated family group
+ * Get member details from a group
+ * @param {string} groupId - Group ID
+ * @param {string} memberId - Member ID
+ * @returns {Promise<Object|null>} Member details object or null
  */
-export async function addFamilyMember(familyId, member) {
+export async function getMemberDetails(groupId, memberId) {
   try {
     const token = getValidToken();
 
     if (!token) {
-      throw new Error("Bạn cần đăng nhập để thêm thành viên");
+      throw new Error("Authentication required");
     }
 
-    const response = await fetch(`${API_BASE_URL}/family/${familyId}/members`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(member),
-    });
+    if (!groupId || !memberId) {
+      throw new Error("Group ID and Member ID are required");
+    }
+
+    const response = await fetch(
+      `${API_BASE_URL}/groups/${groupId}/members/${memberId}`,
+      {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    if (response.status === 404) {
+      console.log(
+        `ℹ️ [Family] Member ${memberId} in group ${groupId} not found (404)`
+      );
+      return null;
+    }
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(
+        errorData.message || `HTTP error! status: ${response.status}`
+      );
     }
 
     const data = await response.json();
-    return data.data || data;
-  } catch (error) {
-    console.error("Error adding family member:", error);
-    // Return mock updated family
-    return getMockAddMember(familyId, member);
-  }
-}
+    console.log(`✅ [Family] Member details fetched:`, data);
 
-/**
- * Get mock add member result
- */
-function getMockAddMember(familyId, member) {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      const family = getMockFamilyById(familyId);
-      if (family) {
-        const newMember = {
-          id: `user_${Date.now()}`,
-          name: member.name,
-          phone: member.phone,
-          role: "member",
-          status: "safe",
-          location: null,
-          lastSeen: new Date().toISOString(),
+    // Transform backend response to match frontend format
+    let location = null;
+    if (data.location) {
+      // Handle nested location structure
+      const loc = data.location.location || data.location;
+      if (loc && loc.coordinates && loc.coordinates.length >= 2) {
+        location = {
+          lat: loc.coordinates[1], // coordinates[0] is longitude, coordinates[1] is latitude
+          lng: loc.coordinates[0],
+          accuracy: data.location.accuracy_m || 0,
+          status: data.location.status || "",
+          updatedAt: data.location.updated_at || 0,
         };
-        family.members.push(newMember);
-        resolve(family);
-      } else {
-        resolve(null);
       }
-    }, 500);
-  });
+    }
+
+    return {
+      id: data.id,
+      name: data.name || "Người dùng",
+      phone: data.phone || "",
+      location: location,
+      status: data.location?.status || "safe",
+      lastSeen: data.location?.updated_at
+        ? new Date(data.location.updated_at * 1000).toISOString()
+        : null,
+    };
+  } catch (error) {
+    console.error(
+      `❌ [Family] Error fetching member ${memberId} in group ${groupId}:`,
+      error
+    );
+    throw error;
+  }
 }
 
 /**

@@ -18,12 +18,15 @@ export default function MapView({
   centerLocation,
   userLocation, // User's actual GPS location
   reports,
+  nearbySOS = [], // SOS signals
   onMarkerClick,
+  onSOSMarkerClick,
   highlightedReport,
 }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersRef = useRef([]);
+  const sosMarkersRef = useRef([]);
   const circleRef = useRef(null);
   const centerMarkerRef = useRef(null);
   const userLocationMarkerRef = useRef(null);
@@ -157,6 +160,36 @@ export default function MapView({
     };
   }, [userLocation]);
 
+  // Helper function to create custom marker with text label
+  const createLabeledMarker = (text, color, size = 12) => {
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    canvas.width = size * 2 + 20;
+    canvas.height = size * 2 + 20;
+
+    // Draw circle background
+    context.beginPath();
+    context.arc(size + 10, size + 10, size, 0, 2 * Math.PI);
+    context.fillStyle = color;
+    context.fill();
+    context.strokeStyle = '#fff';
+    context.lineWidth = 2;
+    context.stroke();
+
+    // Draw text
+    context.fillStyle = '#fff';
+    context.font = 'bold 10px Arial';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(text, size + 10, size + 10);
+
+    return {
+      url: canvas.toDataURL(),
+      scaledSize: new window.google.maps.Size(size * 2 + 20, size * 2 + 20),
+      anchor: new window.google.maps.Point(size + 10, size + 10),
+    };
+  };
+
   // Render report markers
   useEffect(() => {
     if (!mapInstanceRef.current || !window.google) return;
@@ -195,6 +228,74 @@ export default function MapView({
     });
   }, [reports, onMarkerClick, userLocation]);
 
+  // Render SOS markers with "SOS" label
+  useEffect(() => {
+    if (!mapInstanceRef.current || !window.google) return;
+
+    // Cleanup previous SOS markers and circles
+    sosMarkersRef.current.forEach((item) => {
+      if (item.marker && item.marker.setMap) {
+        item.marker.setMap(null);
+      }
+      if (item.circle && item.circle.setMap) {
+        item.circle.setMap(null);
+      }
+    });
+    sosMarkersRef.current = [];
+
+    // Filter out RESOLVED/SOLVED SOS - only render active/RAISED SOS
+    const activeSOS = (nearbySOS || []).filter((sos) => {
+      const status = sos.Status || sos.status || "";
+      return status !== "SOLVED" && status !== "RESOLVED";
+    });
+
+    activeSOS.forEach((sos) => {
+      if (!sos.location || !sos.location.lat || !sos.location.lng) return;
+
+      // Skip if SOS location is same as user location
+      const isUserLocation = userLocation &&
+        Math.abs(sos.location.lat - userLocation.lat) < 0.0001 &&
+        Math.abs(sos.location.lng - userLocation.lng) < 0.0001;
+
+      if (isUserLocation) {
+        return; // Skip rendering SOS marker at user location
+      }
+
+      // Create custom icon with "SOS" text
+      const sosIcon = createLabeledMarker('SOS', '#ef4444', 12);
+
+      const marker = new window.google.maps.Marker({
+        position: sos.location,
+        map: mapInstanceRef.current,
+        icon: sosIcon,
+        title: `SOS: ${sos.body || sos.message || 'Cần cứu hộ khẩn cấp'}`,
+        zIndex: 5, // Higher z-index than reports to show on top
+        animation: window.google.maps.Animation.DROP,
+      });
+
+      // Add pulsing circle effect for SOS
+      const sosCircle = new window.google.maps.Circle({
+        strokeColor: '#ef4444',
+        strokeOpacity: 0.6,
+        strokeWeight: 2,
+        fillColor: '#ef4444',
+        fillOpacity: 0.15,
+        map: mapInstanceRef.current,
+        center: sos.location,
+        radius: 100, // 100 meters radius
+      });
+
+      // Add click listener for SOS marker
+      if (onSOSMarkerClick) {
+        marker.addListener("click", () => {
+          onSOSMarkerClick(sos);
+        });
+      }
+
+      sosMarkersRef.current.push({ marker, circle: sosCircle });
+    });
+  }, [nearbySOS, userLocation, onSOSMarkerClick]);
+
   // Focus on highlighted report
   useEffect(() => {
     if (!mapInstanceRef.current || !highlightedReport) return;
@@ -213,7 +314,7 @@ export default function MapView({
             Nhấn vào điểm trên bản đồ để mở báo cáo chi tiết • Vùng hiển thị bán kính 10km
           </p>
           {/* Legend */}
-          <div className="flex items-center gap-4 text-xs text-slate-400">
+          <div className="flex items-center gap-4 text-xs text-slate-400 flex-wrap">
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-full bg-green-500 border-2 border-white"></div>
               <span>Vị trí của bạn</span>
@@ -223,16 +324,22 @@ export default function MapView({
               <span>Tâm vùng tìm kiếm</span>
             </div>
             <div className="flex items-center gap-2">
+              <div className="w-8 h-4 rounded bg-red-500 border-2 border-white flex items-center justify-center">
+                <span className="text-[8px] text-white font-bold">SOS</span>
+              </div>
+              <span>SOS</span>
+            </div>
+            <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-red-500"></div>
-              <span>Cao</span>
+              <span>Báo cáo: Cao</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-orange-500"></div>
-              <span>Trung bình</span>
+              <span>Báo cáo: Trung bình</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-yellow-500"></div>
-              <span>Thấp</span>
+              <span>Báo cáo: Thấp</span>
             </div>
           </div>
         </div>
