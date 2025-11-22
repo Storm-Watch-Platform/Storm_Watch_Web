@@ -5,17 +5,20 @@ import React, {
   useCallback,
   useRef,
 } from "react";
-import { AlertCircle, Loader } from "lucide-react";
+import { AlertCircle, Loader, AlertTriangle } from "lucide-react";
 import Header from "../components/Layout/Header";
 import MapView from "../components/Map/MapView";
 import ReportsPanel from "../components/Reports/ReportsPanel";
 import SearchLocation from "../components/Location/SearchLocation";
 import ReportModal from "../components/Reports/ReportModal";
 import WeatherWidget from "../components/Weather/WeatherWidget";
-import { queryZoneByCoordinates } from "../services/api";
+import { queryZoneByCoordinates, getNearbySOS } from "../services/api";
 import { getWeatherByCoordinates } from "../services/weatherService";
-import { REGION_PRESETS } from "../data/regionMockData";
 import { calculateDistanceKm } from "../utils/distance";
+import {
+  getCurrentPosition as getCurrentPositionWithFake,
+  getFakeLocation,
+} from "../utils/fakeLocation";
 
 const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
 const DEFAULT_LOCATION = {
@@ -27,9 +30,9 @@ const DEFAULT_LOCATION = {
 function Home() {
   const [mapLoaded, setMapLoaded] = useState(false);
   const [mapError, setMapError] = useState(null);
-  const [isSearching, setIsSearching] = useState(false);
   const [zoneInfo, setZoneInfo] = useState(null);
   const [centerLocation, setCenterLocation] = useState(DEFAULT_LOCATION);
+  const [userLocation, setUserLocation] = useState(null); // User's actual GPS location
   const [reports, setReports] = useState([]);
   const [selectedReport, setSelectedReport] = useState(null);
   const [highlightedReport, setHighlightedReport] = useState(null);
@@ -37,6 +40,9 @@ function Home() {
   const [weatherData, setWeatherData] = useState(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState(null);
+  const [nearbySOS, setNearbySOS] = useState([]);
+  const [sosLoading, setSosLoading] = useState(false);
+  const [showSOSModal, setShowSOSModal] = useState(false);
   const userSelectedRef = useRef(false);
   const mapsScriptLoadedRef = useRef(false);
 
@@ -204,22 +210,98 @@ function Home() {
   const applyReportFilters = useCallback(
     (rawReports = [], center = DEFAULT_LOCATION) => {
       const now = Date.now();
-      return rawReports
-        .filter(
-          (report) =>
-            now - new Date(report.timestamp).getTime() <= THREE_DAYS_MS
-        )
-        .filter((report) => {
-          if (!report.location) return false;
-          const km = calculateDistanceKm(
-            center.lat,
-            center.lng,
-            report.location.lat,
-            report.location.lng
+      console.log(
+        "🔍 [Filter] Starting filter with",
+        rawReports.length,
+        "reports"
+      );
+      console.log("🔍 [Filter] Center:", center);
+      console.log("🔍 [Filter] Current time:", new Date(now).toISOString());
+      console.log(
+        "🔍 [Filter] Three days ago:",
+        new Date(now - THREE_DAYS_MS).toISOString()
+      );
+
+      const timeFiltered = rawReports.filter((report) => {
+        if (!report.timestamp) {
+          console.warn("⚠️ [Filter] Report missing timestamp:", report.id);
+          return false;
+        }
+        const reportTime = new Date(report.timestamp).getTime();
+        const timeDiff = now - reportTime;
+        const isValid = timeDiff <= THREE_DAYS_MS;
+
+        if (!isValid) {
+          console.log(`  ❌ [Filter] Report ${report.id} too old:`, {
+            reportTime: new Date(reportTime).toISOString(),
+            ageHours: (timeDiff / (1000 * 60 * 60)).toFixed(2),
+          });
+        }
+
+        return isValid;
+      });
+
+      console.log(
+        "⏰ [Filter] After time filter:",
+        timeFiltered.length,
+        "reports"
+      );
+
+      const distanceFiltered = timeFiltered.filter((report) => {
+        if (!report.location) {
+          console.warn("⚠️ [Filter] Report missing location:", report.id);
+          return false;
+        }
+
+        if (!report.location.lat || !report.location.lng) {
+          console.warn(
+            "⚠️ [Filter] Report location missing lat/lng:",
+            report.id,
+            report.location
           );
-          return km <= 5;
-        })
-        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+          return false;
+        }
+
+        const km = calculateDistanceKm(
+          center.lat,
+          center.lng,
+          report.location.lat,
+          report.location.lng
+        );
+
+        const isValid = km <= 10;
+
+        if (!isValid) {
+          console.log(`  ❌ [Filter] Report ${report.id} too far:`, {
+            distance: km.toFixed(2),
+            location: report.location,
+          });
+        } else {
+          console.log(`  ✅ [Filter] Report ${report.id} within range:`, {
+            distance: km.toFixed(2),
+            location: report.location,
+          });
+        }
+
+        return isValid;
+      });
+
+      console.log(
+        "📏 [Filter] After distance filter:",
+        distanceFiltered.length,
+        "reports"
+      );
+
+      const sorted = distanceFiltered.sort(
+        (a, b) => new Date(b.timestamp) - new Date(a.timestamp)
+      );
+
+      console.log(
+        "✅ [Filter] Final filtered and sorted reports:",
+        sorted.length
+      );
+
+      return sorted;
     },
     []
   );
@@ -230,12 +312,14 @@ function Home() {
         userSelectedRef.current = true;
       }
       if (!location) return;
-      setIsSearching(true);
       setSelectedReport(null);
       setHighlightedReport(null);
 
       try {
+        console.log("📍 [Home] Fetching reports for location:", location);
         const response = await queryZoneByCoordinates(location);
+        console.log("✅ [Home] API response received:", response);
+
         const center = response.zone?.center || {
           lat: location.lat,
           lng: location.lng,
@@ -251,7 +335,14 @@ function Home() {
             DEFAULT_LOCATION.address,
         });
 
+        console.log(
+          "🔍 [Home] Raw reports before filtering:",
+          response.reports?.length || 0
+        );
+        console.log("🔍 [Home] Filtering reports for center:", center);
         const processed = applyReportFilters(response.reports || [], center);
+        console.log("✅ [Home] Filtered reports:", processed.length);
+        console.log("📋 [Home] Processed reports:", processed);
         setReports(processed);
 
         // Fetch weather data for the location
@@ -286,8 +377,6 @@ function Home() {
       } catch (error) {
         console.error("Error fetching zone data:", error);
         setMapError("Không thể truy vấn dữ liệu. Vui lòng thử lại.");
-      } finally {
-        setIsSearching(false);
       }
     },
     [applyReportFilters]
@@ -310,21 +399,42 @@ function Home() {
         }
 
         console.log("Requesting user location...");
-        navigator.geolocation.getCurrentPosition(
+
+        // Sử dụng getCurrentPosition từ fakeLocation utils
+        // Tự động dùng fake location nếu là test account
+        getCurrentPositionWithFake(
           (pos) => {
             console.log("Geolocation success:", pos.coords);
             if (options.silent && userSelectedRef.current) {
               resolve();
               return;
             }
-            handleLocationSelect(
-              {
-                lat: pos.coords.latitude,
-                lng: pos.coords.longitude,
-                address: "Vị trí hiện tại của bạn",
-              },
-              { fromUser: !options.silent }
-            )
+
+            // Nếu là fake location, dùng address từ config
+            // Nếu không, dùng "Vị trí hiện tại của bạn" (không dùng reverse geocoding)
+            const fakeLoc = getFakeLocation();
+            const isFakeLocation =
+              fakeLoc &&
+              Math.abs(fakeLoc.lat - pos.coords.latitude) < 0.0001 &&
+              Math.abs(fakeLoc.lng - pos.coords.longitude) < 0.0001;
+
+            const address = isFakeLocation
+              ? fakeLoc.address || "Vị trí hiện tại của bạn"
+              : "Vị trí hiện tại của bạn";
+
+            const location = {
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+              address: address,
+            };
+
+            // Save user's actual location for map marker
+            setUserLocation({
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+            });
+
+            handleLocationSelect(location, { fromUser: !options.silent })
               .then(resolve)
               .catch(reject);
           },
@@ -396,9 +506,50 @@ function Home() {
     setHighlightedReport(report);
   };
 
+  const fetchNearbySOS = useCallback(async (coordinates) => {
+    if (!coordinates || !coordinates.lat || !coordinates.lng) return;
+
+    setSosLoading(true);
+    try {
+      console.log("🔔 [Home] Fetching nearby SOS for:", coordinates);
+      const sosList = await getNearbySOS(coordinates, 5); // 5km radius
+      console.log("✅ [Home] Nearby SOS fetched:", sosList.length, "signals");
+      setNearbySOS(sosList || []);
+    } catch (error) {
+      console.error("❌ [Home] Error fetching nearby SOS:", error);
+      setNearbySOS([]);
+    } finally {
+      setSosLoading(false);
+    }
+  }, []);
+
+  // Auto-fetch SOS when location changes
+  useEffect(() => {
+    if (centerLocation && centerLocation.lat && centerLocation.lng) {
+      fetchNearbySOS(centerLocation);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [centerLocation?.lat, centerLocation?.lng]);
+
+  const handleBellClick = () => {
+    if (centerLocation) {
+      fetchNearbySOS(centerLocation);
+    }
+    setShowSOSModal(true);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-cyan-50 to-blue-100">
-      <Header />
+      <Header
+        sosBellProps={{
+          nearbySOS,
+          sosLoading,
+          showSOSModal,
+          setShowSOSModal,
+          handleBellClick,
+          handleLocationSelect,
+        }}
+      />
 
       <main className="container mx-auto px-4 py-8 space-y-6">
         {mapError && (
@@ -456,17 +607,17 @@ function Home() {
           </div>
         )}
 
-        <div className="w-full">
-          <SearchLocation
-            onLocationSelect={(location) =>
-              handleLocationSelect(location, { fromUser: true })
-            }
-            isDisabled={isSearching}
-            regions={REGION_PRESETS}
-            mapsReady={mapLoaded}
-            onUseCurrentLocation={() => requestUserLocation({ silent: false })}
-          />
-        </div>
+        {/* <div className="w-full">
+            <SearchLocation
+              onLocationSelect={(location) =>
+                handleLocationSelect(location, { fromUser: true })
+              }
+              isDisabled={isSearching}
+              regions={REGION_PRESETS}
+              mapsReady={mapLoaded}
+              onUseCurrentLocation={() => requestUserLocation({ silent: false })}
+            />
+          </div> */}
 
         {zoneSummary && (
           <div className="space-y-4">
@@ -537,6 +688,7 @@ function Home() {
               <MapView
                 mapLoaded={mapLoaded}
                 centerLocation={centerLocation}
+                userLocation={userLocation}
                 reports={reports}
                 onMarkerClick={handleMarkerClick}
                 highlightedReport={highlightedReport}

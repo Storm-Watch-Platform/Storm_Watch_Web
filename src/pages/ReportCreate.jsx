@@ -18,6 +18,8 @@ import {
   sendReport,
   isSTOMPConnected,
 } from "../services/stompService";
+import { getCurrentPosition as getCurrentPositionWithFake } from "../utils/fakeLocation";
+import { uploadMultipleImagesToCloudinary } from "../services/cloudinaryService";
 import Header from "../components/Layout/Header";
 
 const REPORT_CATEGORIES = [
@@ -121,6 +123,7 @@ export default function ReportCreate() {
     address: "",
   });
   const [images, setImages] = useState([]);
+  const [uploadingImages, setUploadingImages] = useState(false);
   const [imageAnalysis, setImageAnalysis] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -132,26 +135,6 @@ export default function ReportCreate() {
     "infrastructure-traffic": "INFRASTRUCTURE_TRAFFIC",
     "logistics-survival": "LOGISTICS_SURVIVAL",
     "safety-health": "SAFETY_HEALTH",
-  };
-
-  // Convert image file to Base64 (normalized)
-  const convertImageToBase64 = (file) => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          // Remove "data:image/...;base64," prefix
-          const base64 = e.target.result.split(",")[1];
-          // Normalize Base64 to remove NULL bytes (critical fix from HTML demo)
-          const normalized = btoa(atob(base64));
-          resolve(normalized);
-        } catch (error) {
-          reject(error);
-        }
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
   };
 
   // Connect STOMP when component mounts
@@ -243,35 +226,31 @@ export default function ReportCreate() {
   };
 
   const handleGetLocation = () => {
-    if (!navigator.geolocation) {
-      setError("Trình duyệt không hỗ trợ xác định vị trí.");
-      return;
-    }
-
     setLoading(true);
-    navigator.geolocation.getCurrentPosition(
+
+    // Sử dụng getCurrentPosition từ fakeLocation utils
+    // Tự động dùng fake location nếu là test account
+    getCurrentPositionWithFake(
       (pos) => {
         const location = {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
         };
+
+        // Lấy address từ coords (nếu có từ fake location) hoặc tạo mới
+        const address =
+          pos.coords.address ||
+          `Vị trí: ${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}`;
+
         setFormData({
           ...formData,
           location,
-          address: "Đang xác định địa chỉ...",
+          address: address,
         });
         setLoading(false);
-
-        // Reverse geocode (simplified - in real app use Google Geocoding API)
-        setFormData((prev) => ({
-          ...prev,
-          address: `Vị trí: ${location.lat.toFixed(6)}, ${location.lng.toFixed(
-            6
-          )}`,
-        }));
       },
-      () => {
-        setError("Không thể lấy vị trí. Vui lòng thử lại.");
+      (error) => {
+        setError(error.message || "Không thể lấy vị trí. Vui lòng thử lại.");
         setLoading(false);
       }
     );
@@ -331,18 +310,48 @@ export default function ReportCreate() {
         }
       }
 
-      // Convert first image to Base64
-      let imageBase64 = "";
-      if (images.length > 0 && images[0].file) {
+      // Upload images to Cloudinary
+      setUploadingImages(true);
+      let uploadedImageUrls = [];
+
+      if (images.length > 0) {
         try {
-          imageBase64 = await convertImageToBase64(images[0].file);
+          const filesToUpload = images.map((img) => img.file).filter(Boolean);
+          if (filesToUpload.length > 0) {
+            console.log(
+              `[ReportCreate] 📤 Uploading ${filesToUpload.length} image(s) to Cloudinary...`
+            );
+            uploadedImageUrls = await uploadMultipleImagesToCloudinary(
+              filesToUpload
+            );
+
+            // Log all uploaded image URLs
+            console.log("[ReportCreate] ✅ All images uploaded successfully!");
+            console.log("[ReportCreate] 📸 Image URLs:", uploadedImageUrls);
+            uploadedImageUrls.forEach((url, index) => {
+              console.log(`[ReportCreate]   Image ${index + 1}:`, url);
+            });
+          }
         } catch (error) {
-          console.error("Error converting image to Base64:", error);
-          setError("Lỗi khi xử lý hình ảnh. Vui lòng thử lại.");
+          console.error(
+            "[ReportCreate] ❌ Error uploading images to Cloudinary:",
+            error
+          );
+          setError("Lỗi khi upload hình ảnh. Vui lòng thử lại.");
+          setUploadingImages(false);
           setLoading(false);
           return;
         }
       }
+
+      if (uploadedImageUrls.length === 0) {
+        setError("Vui lòng tải lên ít nhất một hình ảnh.");
+        setUploadingImages(false);
+        setLoading(false);
+        return;
+      }
+
+      setUploadingImages(false);
 
       // Map category to STOMP type
       const type =
@@ -355,15 +364,24 @@ export default function ReportCreate() {
           : formData.subCategory;
 
       // Prepare STOMP report data (all lowercase keys as per backend)
+      // Gửi link đầu tiên (hoặc có thể gửi array nếu backend support)
       const reportData = {
         type: type, // e.g., "WEATHER_NATURE"
         detail: detail, // e.g., "Mưa lớn"
         description: formData.description || "", // Full description
-        image: imageBase64, // Base64 encoded image
+        image: uploadedImageUrls[0], // Cloudinary URL (first image)
+        images: uploadedImageUrls.length > 1 ? uploadedImageUrls : undefined, // All images if multiple
         lat: formData.location.lat, // Latitude
         lon: formData.location.lng, // Longitude
         timestamp: Date.now(), // Timestamp
       };
+
+      // Log image URLs before sending
+      console.log("[ReportCreate] 📤 Sending report with image URLs:");
+      console.log("[ReportCreate]   Main image (image):", reportData.image);
+      if (reportData.images) {
+        console.log("[ReportCreate]   All images (images):", reportData.images);
+      }
 
       // Send report via STOMP
       await sendReport(reportData);
@@ -779,13 +797,15 @@ export default function ReportCreate() {
             </button>
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || uploadingImages}
               className="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
             >
-              {loading ? (
+              {loading || uploadingImages ? (
                 <>
                   <Loader className="w-5 h-5 animate-spin" />
-                  <span>Đang tạo...</span>
+                  <span>
+                    {uploadingImages ? "Đang upload ảnh..." : "Đang tạo..."}
+                  </span>
                 </>
               ) : (
                 "Tạo báo cáo"

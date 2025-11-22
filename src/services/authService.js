@@ -1,6 +1,8 @@
-// Auth Service - Mock API
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api';
-const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API !== 'false'; // Default to true for development
+// Auth Service
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  "https://stormwatchbackend-production.up.railway.app";
+const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API === "true"; // Only use mock if explicitly set to 'true'
 
 // Mock OTP storage (in real app, this would be on server)
 const mockOTPStore = new Map();
@@ -12,21 +14,34 @@ const mockOTPStore = new Map();
  * @returns {Promise<Object>} { success: boolean, message?: string, accessToken?: string, refreshToken?: string }
  */
 export async function login(phone, password) {
-  // Use mock API by default in development
-  if (USE_MOCK_API) {
-    return getMockLogin(phone, password);
-  }
-
+  // Try real API first, fallback to mock only if explicitly enabled
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+    // Normalize phone number: convert +84 to 0 format for backend
+    // Backend expects format like "0812345678" not "+84812345678"
+    let normalizedPhone = phone;
+    if (normalizedPhone.startsWith("+84")) {
+      normalizedPhone = "0" + normalizedPhone.substring(3);
+    } else if (normalizedPhone.startsWith("84")) {
+      normalizedPhone = "0" + normalizedPhone.substring(2);
+    }
 
+    console.log(
+      `🔍 [Auth] Login attempt with phone: ${normalizedPhone} (original: ${phone})`
+    );
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    // Endpoint: /login with JSON body (phone and password in body)
     const response = await fetch(`${API_BASE_URL}/login`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
-      body: JSON.stringify({ phone, password }),
+      body: JSON.stringify({
+        phone: normalizedPhone,
+        password: password,
+      }),
       signal: controller.signal,
     });
 
@@ -34,42 +49,55 @@ export async function login(phone, password) {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
+
+      // If mock is enabled and backend fails, fallback to mock
+      if (USE_MOCK_API && (errorData.message || response.status >= 500)) {
+        console.log("[Auth] Backend error, falling back to mock API");
+        return getMockLogin(phone);
+      }
+
       return {
         success: false,
         message: errorData.message || `HTTP error! status: ${response.status}`,
       };
     }
 
+    // Success!
+    console.log(`✅ [Auth] Login successful`);
+
     const data = await response.json();
-    
+
     // Store tokens and user info
     if (data.accessToken) {
-      localStorage.setItem('token', data.accessToken);
+      localStorage.setItem("token", data.accessToken);
       if (data.refreshToken) {
-        localStorage.setItem('refreshToken', data.refreshToken);
+        localStorage.setItem("refreshToken", data.refreshToken);
       }
-      
+
       // Use userID from response if available, otherwise decode from JWT
       if (data.userID) {
-        localStorage.setItem('userId', data.userID);
+        localStorage.setItem("userId", data.userID);
       } else {
         // Fallback: Decode JWT to get user info (basic decode, no verification)
         try {
-          const tokenPayload = JSON.parse(atob(data.accessToken.split('.')[1]));
-          localStorage.setItem('userId', tokenPayload.id || tokenPayload.userId || '');
-        } catch (e) {
-          localStorage.setItem('userId', '');
+          const tokenPayload = JSON.parse(atob(data.accessToken.split(".")[1]));
+          localStorage.setItem(
+            "userId",
+            tokenPayload.id || tokenPayload.userId || ""
+          );
+        } catch {
+          localStorage.setItem("userId", "");
         }
       }
-      
+
       // Decode JWT to get user name if not in response
       try {
-        const tokenPayload = JSON.parse(atob(data.accessToken.split('.')[1]));
-        localStorage.setItem('userName', tokenPayload.name || '');
-        localStorage.setItem('userPhone', phone);
-      } catch (e) {
-        localStorage.setItem('userName', '');
-        localStorage.setItem('userPhone', phone);
+        const tokenPayload = JSON.parse(atob(data.accessToken.split(".")[1]));
+        localStorage.setItem("userName", tokenPayload.name || "Người dùng");
+        localStorage.setItem("userPhone", normalizedPhone);
+      } catch {
+        localStorage.setItem("userName", "Người dùng");
+        localStorage.setItem("userPhone", normalizedPhone);
       }
     }
 
@@ -80,15 +108,21 @@ export async function login(phone, password) {
       userID: data.userID,
     };
   } catch (error) {
-    // Silently fallback to mock if connection fails (development mode)
-    if (error.name === 'AbortError' || error.message.includes('Failed to fetch')) {
-      console.log('[Auth] Backend không khả dụng, sử dụng mock API');
-      return getMockLogin(phone, password);
+    // Fallback to mock only if explicitly enabled
+    if (
+      USE_MOCK_API &&
+      (error.name === "AbortError" || error.message.includes("Failed to fetch"))
+    ) {
+      console.log("⚠️ [Auth] Backend không khả dụng, sử dụng mock API");
+      return getMockLogin(phone);
     }
-    console.error('Error logging in:', error);
+
+    console.error("❌ [Auth] Error logging in:", error);
     return {
       success: false,
-      message: error.message || 'Có lỗi xảy ra khi đăng nhập',
+      message:
+        error.message ||
+        "Có lỗi xảy ra khi đăng nhập. Vui lòng kiểm tra kết nối.",
     };
   }
 }
@@ -96,17 +130,21 @@ export async function login(phone, password) {
 /**
  * Get mock login (for development)
  */
-function getMockLogin(phone, password) {
+function getMockLogin(phone) {
   return new Promise((resolve) => {
     setTimeout(() => {
-      const mockToken = `mock_token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const mockRefreshToken = `mock_refresh_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const mockToken = `mock_token_${Date.now()}_${Math.random()
+        .toString(36)
+        .substr(2, 9)}`;
+      const mockRefreshToken = `mock_refresh_${Date.now()}_${Math.random()
+        .toString(36)
+        .substr(2, 9)}`;
 
-      localStorage.setItem('token', mockToken);
-      localStorage.setItem('refreshToken', mockRefreshToken);
-      localStorage.setItem('userId', `user_${phone.replace(/\D/g, '')}`);
-      localStorage.setItem('userName', 'Người dùng');
-      localStorage.setItem('userPhone', phone);
+      localStorage.setItem("token", mockToken);
+      localStorage.setItem("refreshToken", mockRefreshToken);
+      localStorage.setItem("userId", `user_${phone.replace(/\D/g, "")}`);
+      localStorage.setItem("userName", "Người dùng");
+      localStorage.setItem("userPhone", phone);
 
       resolve({
         success: true,
@@ -134,9 +172,9 @@ export async function verifyOTP(phone, otp) {
     const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
 
     const response = await fetch(`${API_BASE_URL}/auth/verify-otp`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({ phone, otp }),
       signal: controller.signal,
@@ -149,23 +187,26 @@ export async function verifyOTP(phone, otp) {
     }
 
     const data = await response.json();
-    
+
     // Store token and user info
     if (data.token) {
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('userId', data.user?.id || 'user_123');
-      localStorage.setItem('userName', data.user?.name || 'Người dùng');
-      localStorage.setItem('userPhone', phone);
+      localStorage.setItem("token", data.token);
+      localStorage.setItem("userId", data.user?.id || "user_123");
+      localStorage.setItem("userName", data.user?.name || "Người dùng");
+      localStorage.setItem("userPhone", phone);
     }
 
     return data;
   } catch (error) {
     // Silently fallback to mock if connection fails (development mode)
-    if (error.name === 'AbortError' || error.message.includes('Failed to fetch')) {
-      console.log('[Auth] Backend không khả dụng, sử dụng mock API');
+    if (
+      error.name === "AbortError" ||
+      error.message.includes("Failed to fetch")
+    ) {
+      console.log("[Auth] Backend không khả dụng, sử dụng mock API");
       return getMockVerifyOTP(phone, otp);
     }
-    console.error('Error verifying OTP:', error);
+    console.error("Error verifying OTP:", error);
     // Return mock verification
     return getMockVerifyOTP(phone, otp);
   }
@@ -178,11 +219,11 @@ function getMockVerifyOTP(phone, otp) {
   return new Promise((resolve) => {
     setTimeout(() => {
       const stored = mockOTPStore.get(phone);
-      
+
       if (!stored) {
         resolve({
           success: false,
-          message: 'OTP không hợp lệ hoặc đã hết hạn',
+          message: "OTP không hợp lệ hoặc đã hết hạn",
         });
         return;
       }
@@ -191,7 +232,7 @@ function getMockVerifyOTP(phone, otp) {
         mockOTPStore.delete(phone);
         resolve({
           success: false,
-          message: 'OTP đã hết hạn. Vui lòng yêu cầu mã mới.',
+          message: "OTP đã hết hạn. Vui lòng yêu cầu mã mới.",
         });
         return;
       }
@@ -199,28 +240,30 @@ function getMockVerifyOTP(phone, otp) {
       if (stored.otp !== otp) {
         resolve({
           success: false,
-          message: 'OTP không đúng. Vui lòng thử lại.',
+          message: "OTP không đúng. Vui lòng thử lại.",
         });
         return;
       }
 
       // OTP is valid
       mockOTPStore.delete(phone);
-      const mockToken = `mock_token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const mockToken = `mock_token_${Date.now()}_${Math.random()
+        .toString(36)
+        .substr(2, 9)}`;
       const mockUser = {
-        id: `user_${phone.replace(/\D/g, '')}`,
-        name: 'Người dùng',
+        id: `user_${phone.replace(/\D/g, "")}`,
+        name: "Người dùng",
         phone,
       };
 
-      localStorage.setItem('token', mockToken);
-      localStorage.setItem('userId', mockUser.id);
-      localStorage.setItem('userName', mockUser.name);
-      localStorage.setItem('userPhone', phone);
+      localStorage.setItem("token", mockToken);
+      localStorage.setItem("userId", mockUser.id);
+      localStorage.setItem("userName", mockUser.name);
+      localStorage.setItem("userPhone", phone);
 
       resolve({
         success: true,
-        message: 'Xác thực thành công',
+        message: "Xác thực thành công",
         token: mockToken,
         user: mockUser,
       });
@@ -240,17 +283,30 @@ export async function register(payload) {
   }
 
   try {
+    // Normalize phone number: convert +84 to 0 format for backend
+    // Backend expects format like "0812345678" not "+84812345678"
+    let normalizedPhone = payload.phone;
+    if (normalizedPhone.startsWith("+84")) {
+      normalizedPhone = "0" + normalizedPhone.substring(3);
+    } else if (normalizedPhone.startsWith("84")) {
+      normalizedPhone = "0" + normalizedPhone.substring(2);
+    }
+
+    console.log(
+      `🔍 [Auth] Register attempt with phone: ${normalizedPhone} (original: ${payload.phone})`
+    );
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
     const response = await fetch(`${API_BASE_URL}/signup`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         name: payload.name,
-        phone: payload.phone,
+        phone: normalizedPhone,
         password: payload.password,
       }),
       signal: controller.signal,
@@ -266,36 +322,42 @@ export async function register(payload) {
       };
     }
 
+    // Success!
+    console.log(`✅ [Auth] Register successful`);
+
     const data = await response.json();
-    
+
     // Store tokens and user info
     if (data.accessToken) {
-      localStorage.setItem('token', data.accessToken);
+      localStorage.setItem("token", data.accessToken);
       if (data.refreshToken) {
-        localStorage.setItem('refreshToken', data.refreshToken);
+        localStorage.setItem("refreshToken", data.refreshToken);
       }
-      
+
       // Use userID from response if available, otherwise decode from JWT
       if (data.userID) {
-        localStorage.setItem('userId', data.userID);
+        localStorage.setItem("userId", data.userID);
       } else {
         // Fallback: Decode JWT to get user info (basic decode, no verification)
         try {
-          const tokenPayload = JSON.parse(atob(data.accessToken.split('.')[1]));
-          localStorage.setItem('userId', tokenPayload.id || tokenPayload.userId || '');
-        } catch (e) {
-          localStorage.setItem('userId', '');
+          const tokenPayload = JSON.parse(atob(data.accessToken.split(".")[1]));
+          localStorage.setItem(
+            "userId",
+            tokenPayload.id || tokenPayload.userId || ""
+          );
+        } catch {
+          localStorage.setItem("userId", "");
         }
       }
-      
+
       // Decode JWT to get user name if not in response
       try {
-        const tokenPayload = JSON.parse(atob(data.accessToken.split('.')[1]));
-        localStorage.setItem('userName', tokenPayload.name || payload.name);
-        localStorage.setItem('userPhone', payload.phone);
-      } catch (e) {
-        localStorage.setItem('userName', payload.name);
-        localStorage.setItem('userPhone', payload.phone);
+        const tokenPayload = JSON.parse(atob(data.accessToken.split(".")[1]));
+        localStorage.setItem("userName", tokenPayload.name || payload.name);
+        localStorage.setItem("userPhone", normalizedPhone);
+      } catch {
+        localStorage.setItem("userName", payload.name);
+        localStorage.setItem("userPhone", normalizedPhone);
       }
     }
 
@@ -307,14 +369,17 @@ export async function register(payload) {
     };
   } catch (error) {
     // Silently fallback to mock if connection fails (development mode)
-    if (error.name === 'AbortError' || error.message.includes('Failed to fetch')) {
-      console.log('[Auth] Backend không khả dụng, sử dụng mock API');
+    if (
+      error.name === "AbortError" ||
+      error.message.includes("Failed to fetch")
+    ) {
+      console.log("[Auth] Backend không khả dụng, sử dụng mock API");
       return getMockRegister(payload);
     }
-    console.error('Error registering:', error);
+    console.error("Error registering:", error);
     return {
       success: false,
-      message: error.message || 'Có lỗi xảy ra khi đăng ký',
+      message: error.message || "Có lỗi xảy ra khi đăng ký",
     };
   }
 }
@@ -325,19 +390,23 @@ export async function register(payload) {
 function getMockRegister(payload) {
   return new Promise((resolve) => {
     setTimeout(() => {
-      const mockToken = `mock_token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const mockRefreshToken = `mock_refresh_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const mockToken = `mock_token_${Date.now()}_${Math.random()
+        .toString(36)
+        .substr(2, 9)}`;
+      const mockRefreshToken = `mock_refresh_${Date.now()}_${Math.random()
+        .toString(36)
+        .substr(2, 9)}`;
       const mockUser = {
-        id: `user_${payload.phone.replace(/\D/g, '')}`,
+        id: `user_${payload.phone.replace(/\D/g, "")}`,
         name: payload.name,
         phone: payload.phone,
       };
 
-      localStorage.setItem('token', mockToken);
-      localStorage.setItem('refreshToken', mockRefreshToken);
-      localStorage.setItem('userId', mockUser.id);
-      localStorage.setItem('userName', mockUser.name);
-      localStorage.setItem('userPhone', mockUser.phone);
+      localStorage.setItem("token", mockToken);
+      localStorage.setItem("refreshToken", mockRefreshToken);
+      localStorage.setItem("userId", mockUser.id);
+      localStorage.setItem("userName", mockUser.name);
+      localStorage.setItem("userPhone", mockUser.phone);
 
       resolve({
         success: true,
@@ -352,11 +421,11 @@ function getMockRegister(payload) {
  * Logout
  */
 export function logout() {
-  localStorage.removeItem('token');
-  localStorage.removeItem('refreshToken');
-  localStorage.removeItem('userId');
-  localStorage.removeItem('userName');
-  localStorage.removeItem('userPhone');
+  localStorage.removeItem("token");
+  localStorage.removeItem("refreshToken");
+  localStorage.removeItem("userId");
+  localStorage.removeItem("userName");
+  localStorage.removeItem("userPhone");
 }
 
 /**
@@ -364,7 +433,7 @@ export function logout() {
  * @returns {boolean} True if authenticated
  */
 export function isAuthenticated() {
-  return !!localStorage.getItem('token');
+  return !!localStorage.getItem("token");
 }
 
 /**
@@ -372,16 +441,15 @@ export function isAuthenticated() {
  * @returns {Object|null} User object or null
  */
 export function getCurrentUser() {
-  const userId = localStorage.getItem('userId');
-  const userName = localStorage.getItem('userName');
-  const userPhone = localStorage.getItem('userPhone');
+  const userId = localStorage.getItem("userId");
+  const userName = localStorage.getItem("userName");
+  const userPhone = localStorage.getItem("userPhone");
 
   if (!userId) return null;
 
   return {
     id: userId,
-    name: userName || 'Người dùng',
-    phone: userPhone || '',
+    name: userName || "Người dùng",
+    phone: userPhone || "",
   };
 }
-

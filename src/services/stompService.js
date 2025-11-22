@@ -1,5 +1,6 @@
 // STOMP WebSocket Service
 // Based on the demo HTML file from backend team
+import { getCurrentPosition as getCurrentPositionWithFake } from "../utils/fakeLocation";
 
 const WS_URL =
   import.meta.env.VITE_WS_URL ||
@@ -14,6 +15,12 @@ let userId = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 5;
 
+// Location tracking variables
+let locationWatchId = null;
+let locationIntervalId = null;
+let isLocationTrackingActive = false;
+let autoStartLocationTracking = true; // Auto-start location tracking after connection
+
 /**
  * Initialize WebSocket connection with STOMP protocol
  * @param {string} userID - User ID from authentication
@@ -21,13 +28,25 @@ const MAX_RECONNECT_ATTEMPTS = 5;
  */
 export function connectSTOMP(userID) {
   return new Promise((resolve, reject) => {
+    // Get caller info for debugging
+    const stack = new Error().stack;
+    const caller = stack?.split("\n")[2]?.trim() || "unknown";
+    console.log("[STOMP] connectSTOMP called with userID:", userID);
+    console.log("[STOMP] Called from:", caller);
+    console.log("[STOMP] Current state - ws:", ws, "isConnected:", isConnected);
+
     if (ws && isConnected) {
+      console.log("[STOMP] Already connected, resolving immediately");
       resolve(true);
       return;
     }
 
     userId = userID;
     ws = new WebSocket(WS_URL);
+
+    // Store resolve/reject to use in onmessage
+    const connectionResolve = resolve;
+    const connectionReject = reject;
 
     ws.onopen = () => {
       console.log("[STOMP] WebSocket connected, sending CONNECT frame...");
@@ -41,9 +60,8 @@ export function connectSTOMP(userID) {
 
       ws.send(frame);
       console.log("[STOMP] >>> SENT CONNECT");
-      isConnected = true;
       reconnectAttempts = 0;
-      resolve(true);
+      // Don't resolve yet - wait for CONNECTED frame
     };
 
     ws.onmessage = (event) => {
@@ -56,20 +74,53 @@ export function connectSTOMP(userID) {
       // Handle STOMP CONNECTED frame
       if (data.startsWith("CONNECTED")) {
         console.log("[STOMP] ✅ Connected successfully");
+        console.log("[STOMP] Resolving promise...");
         isConnected = true;
+        // Resolve promise only after receiving CONNECTED frame
+        if (connectionResolve) {
+          console.log("[STOMP] Calling connectionResolve...");
+          try {
+            connectionResolve(true);
+            console.log("[STOMP] Promise resolved!");
+          } catch (error) {
+            console.error("[STOMP] Error in connectionResolve:", error);
+          }
+        } else {
+          console.warn("[STOMP] ⚠️ connectionResolve is null!");
+        }
+
+        // Auto-start location tracking after successful connection
+        if (autoStartLocationTracking && !isLocationTrackingActive) {
+          console.log("[STOMP] 🚀 Auto-starting location tracking...");
+          startLocationTracking({ interval: 5000 })
+            .then(() => {
+              console.log(
+                "[STOMP] ✅ Auto-started location tracking successfully"
+              );
+            })
+            .catch((error) => {
+              console.error(
+                "[STOMP] ❌ Failed to auto-start location tracking:",
+                error
+              );
+            });
+        }
       }
 
       // Handle errors
       if (data.startsWith("ERROR")) {
         console.error("[STOMP] ❌ Error:", data);
         isConnected = false;
+        if (connectionReject) {
+          connectionReject(new Error("STOMP connection error: " + data));
+        }
       }
     };
 
     ws.onerror = (error) => {
       console.error("[STOMP] WebSocket error:", error);
       isConnected = false;
-      reject(error);
+      connectionReject(error);
     };
 
     ws.onclose = () => {
@@ -95,6 +146,9 @@ export function connectSTOMP(userID) {
  * Disconnect WebSocket
  */
 export function disconnectSTOMP() {
+  // Stop location tracking before disconnecting
+  stopLocationTracking();
+
   if (ws) {
     ws.close();
     ws = null;
@@ -135,13 +189,156 @@ export function sendLocation(locationData) {
 
     try {
       ws.send(frame);
-      console.log("[STOMP] >>> SENT Location:", location);
+      console.log(
+        "📍 [STOMP LOCATION] >>> SENT Location Update:",
+        `lat: ${lat}, lon: ${lon}, accuracy: ${accuracy}m, status: ${status}`
+      );
+      console.log("📍 [STOMP LOCATION] Full payload:", location);
       resolve(true);
     } catch (error) {
-      console.error("[STOMP] Error sending location:", error);
+      console.error("❌ [STOMP LOCATION] Error sending location:", error);
       reject(error);
     }
   });
+}
+
+/**
+ * Start continuous location tracking and sending
+ * @param {Object} options - { interval: 5000, enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+ * @returns {Promise<boolean>} Start success
+ */
+export function startLocationTracking(options = {}) {
+  return new Promise((resolve, reject) => {
+    console.log("📍 [STOMP LOCATION] startLocationTracking called");
+    console.log(
+      "📍 [STOMP LOCATION] isLocationTrackingActive:",
+      isLocationTrackingActive
+    );
+    console.log("📍 [STOMP LOCATION] ws:", ws);
+    console.log("📍 [STOMP LOCATION] isConnected:", isConnected);
+
+    if (isLocationTrackingActive) {
+      console.log("📍 [STOMP LOCATION] Location tracking already active");
+      resolve(true);
+      return;
+    }
+
+    if (!ws || !isConnected) {
+      const error = new Error("WebSocket not connected");
+      console.error(
+        "❌ [STOMP LOCATION] Cannot start tracking:",
+        error.message
+      );
+      reject(error);
+      return;
+    }
+
+    const {
+      interval = 5000, // Send location every 5 seconds
+      enableHighAccuracy = true,
+      timeout = 10000,
+      maximumAge = 0,
+    } = options;
+
+    console.log(
+      `📍 [STOMP LOCATION] 🚀 Starting continuous location tracking (interval: ${interval}ms)`
+    );
+
+    // Use watchPosition for continuous updates
+    if (navigator.geolocation) {
+      // Set up interval to send location periodically
+      // Use getCurrentPositionWithFake to support fake location for test accounts
+      locationIntervalId = setInterval(() => {
+        getCurrentPositionWithFake(
+          (position) => {
+            const { latitude, longitude, accuracy } = position.coords;
+            sendLocation({
+              lat: latitude,
+              lon: longitude,
+              accuracy: accuracy || 0,
+              status: "ACTIVE",
+            }).catch((error) => {
+              console.error(
+                "❌ [STOMP LOCATION] Failed to send interval location:",
+                error
+              );
+            });
+          },
+          (error) => {
+            console.error("❌ [STOMP LOCATION] Geolocation error:", error);
+          },
+          {
+            enableHighAccuracy,
+            timeout,
+            maximumAge,
+          }
+        );
+      }, interval);
+
+      // Also use watchPosition for immediate updates when location changes significantly
+      // Note: watchPosition doesn't support fake location wrapper, so use navigator.geolocation directly
+      // For test accounts, interval will handle sending location
+      if (navigator.geolocation.watchPosition) {
+        locationWatchId = navigator.geolocation.watchPosition(
+          () => {
+            // Location is being tracked, will be sent via interval
+            // This watchPosition helps get more frequent updates from GPS
+          },
+          (error) => {
+            console.error(
+              "❌ [STOMP LOCATION] Geolocation watch error:",
+              error
+            );
+          },
+          {
+            enableHighAccuracy,
+            timeout,
+            maximumAge,
+          }
+        );
+      }
+
+      isLocationTrackingActive = true;
+      console.log("✅ [STOMP LOCATION] Location tracking started successfully");
+      resolve(true);
+    } else {
+      const error = new Error("Geolocation not supported");
+      console.error("❌ [STOMP LOCATION]", error);
+      reject(error);
+    }
+  });
+}
+
+/**
+ * Stop continuous location tracking
+ */
+export function stopLocationTracking() {
+  if (locationWatchId !== null) {
+    navigator.geolocation.clearWatch(locationWatchId);
+    locationWatchId = null;
+    console.log(
+      "📍 [STOMP LOCATION] 🛑 Stopped location tracking (watchPosition cleared)"
+    );
+  }
+
+  if (locationIntervalId !== null) {
+    clearInterval(locationIntervalId);
+    locationIntervalId = null;
+    console.log(
+      "📍 [STOMP LOCATION] 🛑 Stopped location tracking (interval cleared)"
+    );
+  }
+
+  isLocationTrackingActive = false;
+  console.log("✅ [STOMP LOCATION] Location tracking stopped completely");
+}
+
+/**
+ * Check if location tracking is active
+ * @returns {boolean}
+ */
+export function getLocationTrackingStatus() {
+  return isLocationTrackingActive;
 }
 
 /**
@@ -189,10 +386,17 @@ export function sendReport(reportData) {
 
     try {
       ws.send(frame);
-      console.log("[STOMP] >>> SENT Report:", report);
+      console.log(
+        "📝 [STOMP REPORT] >>> SENT Report:",
+        `type: ${type}, detail: ${detail}, lat: ${lat}, lon: ${lon}`
+      );
+      console.log("📝 [STOMP REPORT] Full payload:", {
+        ...report,
+        image: image ? `[Base64 image, ${image.length} chars]` : "No image",
+      });
       resolve(true);
     } catch (error) {
-      console.error("[STOMP] Error sending report:", error);
+      console.error("❌ [STOMP REPORT] Error sending report:", error);
       reject(error);
     }
   });
@@ -268,10 +472,15 @@ export function sendAlert(alertData) {
 
     try {
       ws.send(frame);
-      console.log("[STOMP] >>> SENT Alert:", alert);
+      console.log(
+        "🚨 [STOMP SOS/ALERT] >>> SENT Emergency Alert:",
+        `lat: ${lat}, lon: ${lon}, radius: ${radius_m}m, TTL: ${ttl_min}min`
+      );
+      console.log("🚨 [STOMP SOS/ALERT] Alert body:", body);
+      console.log("🚨 [STOMP SOS/ALERT] Full payload:", alert);
       resolve(true);
     } catch (error) {
-      console.error("[STOMP] Error sending alert:", error);
+      console.error("❌ [STOMP SOS/ALERT] Error sending alert:", error);
       reject(error);
     }
   });

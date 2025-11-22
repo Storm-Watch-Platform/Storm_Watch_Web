@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Phone, Loader, AlertCircle, Lock } from 'lucide-react';
 import { login } from '../services/authService';
-import { validatePhone, normalizePhone } from '../utils/validators';
+import { normalizePhone } from '../utils/validators';
 
 export default function Login() {
   const [formData, setFormData] = useState({
@@ -24,19 +24,23 @@ export default function Login() {
     e.preventDefault();
     setError('');
 
-    const normalizedPhone = normalizePhone(formData.phone);
-    if (!validatePhone(normalizedPhone)) {
-      setError('Số điện thoại không hợp lệ. Vui lòng nhập số điện thoại Việt Nam.');
+    // Validation nhẹ: chỉ check không rỗng
+    if (!formData.phone || !formData.phone.trim()) {
+      setError('Vui lòng nhập số điện thoại.');
       return;
     }
 
-    if (!formData.password) {
+    if (!formData.password || !formData.password.trim()) {
       setError('Vui lòng nhập mật khẩu.');
       return;
     }
 
     setLoading(true);
     try {
+      // Normalize phone nếu có thể, nhưng không bắt buộc validate format
+      const normalizedPhone = normalizePhone(formData.phone.trim());
+      
+      // Gửi về backend để backend validate
       const result = await login(normalizedPhone, formData.password);
       if (result.success) {
         navigate('/');
