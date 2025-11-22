@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { isAuthenticated } from './services/authService';
-import { connectSTOMP, disconnectSTOMP } from './services/stompService';
+import { connectSTOMP, disconnectSTOMP, startLocationTracking } from './services/stompService';
 import Home from './pages/Home';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -20,18 +20,33 @@ function ProtectedRoute({ children }) {
 }
 
 function App() {
+  console.log('[App] App component rendered');
+  
   // Global WebSocket connection - connect once when app loads
   useEffect(() => {
+    console.log('[App] useEffect running...');
     const userId = localStorage.getItem('userId');
+    console.log('[App] userId from localStorage:', userId);
 
     if (userId) {
       console.log('[App] Connecting to WebSocket with userId:', userId);
       connectSTOMP(userId)
         .then(() => {
           console.log('✅ [App] Global WebSocket connected successfully');
+          console.log('[App] About to call startLocationTracking...');
+          // Start location tracking after successful connection
+          startLocationTracking({ interval: 5000 }) // Gửi location mỗi 5 giây
+            .then(() => {
+              console.log('✅ [App] Location tracking started');
+            })
+            .catch((error) => {
+              console.error('❌ [App] Failed to start location tracking:', error);
+              console.error('❌ [App] Error stack:', error.stack);
+            });
         })
         .catch((error) => {
           console.error('❌ [App] WebSocket connection failed:', error);
+          console.error('❌ [App] Error stack:', error.stack);
         });
     } else {
       console.log('[App] No userId found, skipping WebSocket connection');

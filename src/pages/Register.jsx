@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Phone, User, Loader, AlertCircle, Lock } from "lucide-react";
 import { register } from "../services/authService";
-import { validatePhone, normalizePhone } from "../utils/validators";
+import { normalizePhone } from "../utils/validators";
 
 export default function Register() {
   const [formData, setFormData] = useState({
@@ -25,13 +25,14 @@ export default function Register() {
     e.preventDefault();
     setError("");
 
-    const normalizedPhone = normalizePhone(formData.phone);
-    if (!validatePhone(normalizedPhone)) {
-      setError(
-        "Số điện thoại không hợp lệ. Vui lòng nhập số điện thoại Việt Nam."
-      );
+    // Kiểm tra số điện thoại có đúng 10 số không (trước khi normalize)
+    const phoneDigits = formData.phone.replace(/\D/g, ""); // Lấy tất cả số từ input gốc
+    if (phoneDigits.length !== 10) {
+      setError("Số điện thoại phải có đúng 10 số.");
       return;
     }
+
+    const normalizedPhone = normalizePhone(formData.phone);
 
     if (!formData.name.trim()) {
       setError("Vui lòng nhập tên của bạn.");

@@ -1,61 +1,62 @@
-// SOS Service - Mock API
-import { mockSOSSignals, createSOSSignal, getSOSSignalsNearby } from '../data/mockSOS';
-import { sendAlert, isSTOMPConnected } from './stompService';
+// SOS Service - STOMP WebSocket only
+// Backend automatically saves SOS to DB when receiving STOMP alert
+import { mockSOSSignals, getSOSSignalsNearby } from "../data/mockSOS";
+import { sendAlert, isSTOMPConnected } from "./stompService";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api';
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:3000/api";
 
 /**
- * Send SOS signal
+ * Send SOS signal via STOMP WebSocket only
+ * Backend will automatically save to DB when receiving STOMP alert
  * @param {Object} location - { lat: number, lng: number }
  * @param {string} message - Optional message
- * @returns {Promise<Object>} Created SOS signal
+ * @returns {Promise<Object>} Created SOS signal object (simulated, actual data from backend via STOMP response)
  */
-export async function sendSOS(location, message = '') {
+export async function sendSOS(location, message = "") {
+  // Check if STOMP is connected
+  if (!isSTOMPConnected()) {
+    throw new Error(
+      "WebSocket STOMP not connected. Please wait for connection or refresh the page."
+    );
+  }
+
   try {
-    const userId = localStorage.getItem('userId') || 'user_123';
-    const response = await fetch(`${API_BASE_URL}/sos`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('token')}`,
-      },
-      body: JSON.stringify({
-        location,
-        message,
-        userId,
-      }),
+    const userId =
+      localStorage.getItem("userId") ||
+      localStorage.getItem("userID") ||
+      "user_123";
+
+    // 🚀 Send SOS alert via STOMP only - Backend will save to DB automatically
+    await sendAlert({
+      body: message || "SOS - Cần cứu trợ khẩn cấp!",
+      lat: location.lat,
+      lon: location.lng,
+      radius_m: 10000,
+      ttl_min: 5,
     });
 
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
+    console.log(
+      "✅ [SOS] Alert sent via STOMP WebSocket - Backend will save to DB"
+    );
 
-    const data = await response.json();
-
-    // 🚀 Broadcast real-time qua WebSocket STOMP (nếu đã connect)
-    if (isSTOMPConnected()) {
-      try {
-        await sendAlert({
-          body: message || "SOS - Cần cứu trợ khẩn cấp!",
-          lat: location.lat,
-          lon: location.lng,
-          radius_m: 10000,
-          ttl_min: 5
-        });
-        console.log('✅ SOS broadcast via WebSocket STOMP');
-      } catch (wsError) {
-        console.warn('⚠️ WebSocket broadcast failed, but SOS saved to server:', wsError);
-      }
-    } else {
-      console.warn('⚠️ WebSocket not connected, SOS saved but not broadcasted');
-    }
-
-    return data.data || data;
+    // Return simulated SOS object for immediate UI update
+    // Backend will broadcast the actual saved SOS via STOMP if needed
+    return {
+      id: `sos_${Date.now()}`,
+      userId: userId,
+      location: location,
+      address:
+        location.address ||
+        `${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}`,
+      message: message || "SOS - Cần cứu trợ khẩn cấp!",
+      status: "active",
+      timestamp: new Date().toISOString(),
+      // Note: This is a temporary object, actual data comes from backend via STOMP
+    };
   } catch (error) {
-    console.error('Error sending SOS:', error);
-    // Return mock SOS signal
-    const userId = localStorage.getItem('userId') || 'user_123';
-    return createSOSSignal(userId, location, message);
+    console.error("❌ [SOS] Error sending SOS via STOMP:", error);
+    throw new Error(`Không thể gửi tín hiệu SOS: ${error.message}`);
   }
 }
 
@@ -71,9 +72,9 @@ export async function getSOSNearby(lat, lng, radius = 10000) {
     const response = await fetch(
       `${API_BASE_URL}/sos/nearby?lat=${lat}&lng=${lng}&radius=${radius}`,
       {
-        method: 'GET',
+        method: "GET",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
       }
     );
@@ -85,7 +86,7 @@ export async function getSOSNearby(lat, lng, radius = 10000) {
     const data = await response.json();
     return data.data || data;
   } catch (error) {
-    console.error('Error fetching SOS nearby:', error);
+    console.error("Error fetching SOS nearby:", error);
     // Return mock data
     return getSOSSignalsNearby(lat, lng, radius);
   }
@@ -98,10 +99,10 @@ export async function getSOSNearby(lat, lng, radius = 10000) {
 export async function getActiveSOS() {
   try {
     const response = await fetch(`${API_BASE_URL}/sos/active`, {
-      method: 'GET',
+      method: "GET",
       headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('token')}`,
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${localStorage.getItem("token")}`,
       },
     });
 
@@ -112,17 +113,16 @@ export async function getActiveSOS() {
     const data = await response.json();
     return data.data || data;
   } catch (error) {
-    console.error('Error fetching active SOS:', error);
+    console.error("Error fetching active SOS:", error);
 
     // Prevent spam requests by adding a small delay
     return await new Promise((resolve) => {
       setTimeout(() => {
-        resolve(mockSOSSignals.filter((sos) => sos.status === 'active'));
+        resolve(mockSOSSignals.filter((sos) => sos.status === "active"));
       }, 500); // thêm delay để tránh spam
     });
   }
 }
-
 
 /**
  * Cancel SOS signal
@@ -132,10 +132,10 @@ export async function getActiveSOS() {
 export async function cancelSOS(sosId) {
   try {
     const response = await fetch(`${API_BASE_URL}/sos/${sosId}/cancel`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('token')}`,
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${localStorage.getItem("token")}`,
       },
     });
 
@@ -146,13 +146,13 @@ export async function cancelSOS(sosId) {
     const data = await response.json();
     return data.data || data;
   } catch (error) {
-    console.error('Error canceling SOS:', error);
+    console.error("Error canceling SOS:", error);
     // Return mock updated SOS
     return new Promise((resolve) => {
       setTimeout(() => {
         const sos = mockSOSSignals.find((s) => s.id === sosId);
         if (sos) {
-          sos.status = 'cancelled';
+          sos.status = "cancelled";
           resolve(sos);
         } else {
           resolve(null);
@@ -161,4 +161,3 @@ export async function cancelSOS(sosId) {
     });
   }
 }
-
