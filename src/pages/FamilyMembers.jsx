@@ -1,24 +1,24 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, Loader, AlertCircle } from 'lucide-react';
-import { getFamily, addFamilyMember } from '../services/familyService';
-import { getCurrentUser } from '../services/authService';
-import Header from '../components/Layout/Header';
-import MemberCard from '../components/Family/MemberCard';
-import FamilyInviteModal from '../components/Family/FamilyInviteModal';
+import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { ArrowLeft, Plus, Loader, AlertCircle } from "lucide-react";
+import { getFamily } from "../services/familyService";
+import { getCurrentUser } from "../services/authService";
+import Header from "../components/Layout/Header";
+import MemberCard from "../components/Family/MemberCard";
+import FamilyInviteModal from "../components/Family/FamilyInviteModal";
 
 export default function FamilyMembers() {
   const navigate = useNavigate();
   const [family, setFamily] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showInviteModal, setShowInviteModal] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
 
   const user = getCurrentUser();
 
   useEffect(() => {
     if (!user) {
-      navigate('/login');
+      navigate("/login");
       return;
     }
 
@@ -31,8 +31,8 @@ export default function FamilyMembers() {
       const data = await getFamily();
       setFamily(data);
     } catch (err) {
-      setError('Có lỗi xảy ra khi tải thông tin gia đình');
-      console.error('Fetch family error:', err);
+      setError("Có lỗi xảy ra khi tải thông tin gia đình");
+      console.error("Fetch family error:", err);
     } finally {
       setLoading(false);
     }
@@ -42,12 +42,18 @@ export default function FamilyMembers() {
     if (!family) return;
 
     try {
-      const updatedFamily = await addFamilyMember(family.id, memberData);
-      setFamily(updatedFamily);
+      // TODO: Implement addFamilyMember API if needed
+      // For now, just refresh the family data
+      console.log("📝 [FamilyMembers] Member data to add:", memberData);
+      setError(
+        "Tính năng thêm thành viên trực tiếp chưa được hỗ trợ. Vui lòng sử dụng mã mời để thêm thành viên."
+      );
       setShowInviteModal(false);
+      // Refresh family data
+      await fetchFamily();
     } catch (err) {
-      setError('Có lỗi xảy ra khi thêm thành viên');
-      console.error('Add member error:', err);
+      setError("Có lỗi xảy ra khi thêm thành viên");
+      console.error("Add member error:", err);
     }
   };
 
@@ -83,7 +89,7 @@ export default function FamilyMembers() {
       <Header />
       <main className="container mx-auto px-4 py-8 max-w-6xl">
         <button
-          onClick={() => navigate('/family')}
+          onClick={() => navigate("/family")}
           className="mb-6 flex items-center gap-2 text-slate-400 hover:text-white transition-colors"
         >
           <ArrowLeft className="w-5 h-5" />
@@ -92,8 +98,12 @@ export default function FamilyMembers() {
 
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-3xl font-bold text-white mb-2">Thành viên gia đình</h1>
-            <p className="text-slate-400">{family.members?.length || 0} thành viên</p>
+            <h1 className="text-3xl font-bold text-white mb-2">
+              Thành viên gia đình
+            </h1>
+            <p className="text-slate-400">
+              {family.members?.length || 0} thành viên
+            </p>
           </div>
           {isOwner && (
             <button
@@ -129,4 +139,3 @@ export default function FamilyMembers() {
     </div>
   );
 }
-

@@ -269,15 +269,22 @@ export async function getNearbySOS(coordinates, km = 5) {
     const filteredSosList = sosList.filter((sos) => {
       const sosUserId =
         sos.UserID || sos.userID || sos.user_id || sos.userId || null;
+      
+      // Compare both as strings to ensure exact match
       const isOwnSOS =
-        currentUserId && sosUserId && sosUserId === currentUserId;
+        currentUserId &&
+        sosUserId &&
+        String(currentUserId).trim() === String(sosUserId).trim();
 
       if (isOwnSOS) {
         console.log(
           "🚫 [API] Filtering out own SOS:",
           sos.alertId || sos.id,
           "from user:",
-          sosUserId
+          sosUserId,
+          "(current user:",
+          currentUserId,
+          ")"
         );
       }
 
