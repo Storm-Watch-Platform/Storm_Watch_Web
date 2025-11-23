@@ -6,18 +6,21 @@ const statusColors = {
   safe: 'text-green-400',
   warning: 'text-yellow-400',
   danger: 'text-red-400',
+  unknown: 'text-gray-400',
 };
 
 const statusLabels = {
   safe: 'An toàn',
   warning: 'Cảnh báo',
   danger: 'Nguy hiểm',
+  unknown: 'Không xác định',
 };
 
 const statusColorsLight = {
   safe: 'bg-green-50 text-green-700 border-green-200',
   warning: 'bg-yellow-50 text-yellow-700 border-yellow-200',
   danger: 'bg-red-50 text-red-700 border-red-200',
+  unknown: 'bg-gray-50 text-gray-700 border-gray-200',
 };
 
 export default function FamilyPanel({ family }) {
@@ -59,8 +62,8 @@ export default function FamilyPanel({ family }) {
                     )}
                   </div>
                 </div>
-                <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${statusColorsLight[member.status] || statusColorsLight.safe}`}>
-                  {statusLabels[member.status] || statusLabels.safe}
+                <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${statusColorsLight[member.status] || statusColorsLight.unknown}`}>
+                  {statusLabels[member.status] || statusLabels.unknown}
                 </span>
               </div>
               <div className="space-y-2 text-sm">

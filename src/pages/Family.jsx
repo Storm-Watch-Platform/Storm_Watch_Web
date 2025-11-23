@@ -10,6 +10,8 @@ import {
   Check,
   RefreshCw,
   Eye,
+  Map,
+  List,
 } from "lucide-react";
 import {
   getAllFamilies,
@@ -19,6 +21,7 @@ import {
 import { getCurrentUser } from "../services/authService";
 import Header from "../components/Layout/Header";
 import FamilyPanel from "../components/Family/FamilyPanel";
+import FamilyMapView from "../components/Family/FamilyMapView";
 
 export default function Family() {
   const navigate = useNavigate();
@@ -30,16 +33,76 @@ export default function Family() {
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState("view"); // 'view', 'create' or 'join'
+  const [viewMode, setViewMode] = useState("list"); // 'list' or 'map'
   const [groupName, setGroupName] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [createdInviteCode, setCreatedInviteCode] = useState("");
   const [copied, setCopied] = useState(false);
+  const [mapLoaded, setMapLoaded] = useState(false);
+  const [mapError, setMapError] = useState(null);
 
   // Get user once and check if exists
   const user = getCurrentUser();
   const userId = user?.id || localStorage.getItem("userId");
   const token =
     localStorage.getItem("token") || localStorage.getItem("accessToken");
+
+  // Load Google Maps API for map view
+  useEffect(() => {
+    if (viewMode !== "map") return; // Only load when map view is active
+
+    const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+
+    if (!GOOGLE_MAPS_API_KEY) {
+      setMapError(
+        "VITE_GOOGLE_MAPS_API_KEY chưa được cấu hình. Vui lòng thêm vào file .env"
+      );
+      return;
+    }
+
+    // Check if already loaded
+    if (window.google && window.google.maps) {
+      setMapLoaded(true);
+      return;
+    }
+
+    // Check if script is already being loaded
+    const existingScript = document.querySelector(
+      'script[src*="maps.googleapis.com"]'
+    );
+    if (existingScript) {
+      existingScript.addEventListener("load", () => {
+        if (window.google && window.google.maps) {
+          setMapLoaded(true);
+        }
+      });
+      return;
+    }
+
+    // Create script tag
+    const script = document.createElement("script");
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&libraries=places`;
+    script.async = true;
+    script.defer = true;
+
+    script.onload = () => {
+      if (window.google && window.google.maps) {
+        setMapLoaded(true);
+      }
+    };
+
+    script.onerror = () => {
+      setMapError(
+        "Không thể tải Google Maps API. Vui lòng kiểm tra API key và kết nối mạng."
+      );
+    };
+
+    document.head.appendChild(script);
+
+    return () => {
+      // Cleanup if needed
+    };
+  }, [viewMode]);
 
   // Fetch family only once on mount
   useEffect(() => {
@@ -612,7 +675,7 @@ export default function Family() {
 
             {/* Main Content - 2 Column Layout */}
             {family && (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
                 {/* Left Column - Group Info Sidebar */}
                 <div className="lg:col-span-1 space-y-4">
                   <div className="bg-white/90 backdrop-blur-md rounded-2xl p-6 border border-blue-200 shadow-lg">
@@ -644,13 +707,13 @@ export default function Family() {
                         />
                         <span>Làm mới</span>
                       </button>
-                      <button
+                      {/* <button
                         onClick={() => navigate("/family/members")}
                         className="w-full px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-lg transition-all flex items-center justify-center gap-2 shadow-md hover:shadow-lg font-semibold"
                       >
                         <span>Quản lý thành viên</span>
                         <ArrowRight className="w-4 h-4" />
-                      </button>
+                      </button> */}
                     </div>
 
                     {/* Group Info */}
@@ -688,9 +751,64 @@ export default function Family() {
                   </div>
                 </div>
 
-                {/* Right Column - Members List */}
+                {/* Right Column - Members List or Map */}
                 <div className="lg:col-span-2">
-                  <FamilyPanel family={family} />
+                  {/* View Mode Toggle */}
+                  <div className="mb-4 flex gap-2">
+                    <button
+                      onClick={() => setViewMode("list")}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition-all ${
+                        viewMode === "list"
+                          ? "bg-blue-600 text-white shadow-md"
+                          : "bg-white text-blue-700 border border-blue-200 hover:bg-blue-50"
+                      }`}
+                    >
+                      <List className="w-4 h-4" />
+                      <span>Danh sách</span>
+                    </button>
+                    <button
+                      onClick={() => setViewMode("map")}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition-all ${
+                        viewMode === "map"
+                          ? "bg-blue-600 text-white shadow-md"
+                          : "bg-white text-blue-700 border border-blue-200 hover:bg-blue-50"
+                      }`}
+                    >
+                      <Map className="w-4 h-4" />
+                      <span>Bản đồ</span>
+                    </button>
+                  </div>
+
+                  {/* List View */}
+                  {viewMode === "list" && <FamilyPanel family={family} />}
+
+                  {/* Map View */}
+                  {viewMode === "map" && (
+                    <div>
+                      {mapError && (
+                        <div className="mb-4 p-4 bg-red-50 border border-red-300 rounded-lg">
+                          <p className="text-red-700 text-sm">{mapError}</p>
+                        </div>
+                      )}
+                      {!mapLoaded && !mapError && (
+                        <div className="bg-white/90 backdrop-blur-md border border-blue-200 rounded-2xl p-12 text-center shadow-lg">
+                          <Loader className="w-8 h-8 text-blue-500 animate-spin mx-auto mb-4" />
+                          <p className="text-blue-700">Đang tải bản đồ...</p>
+                        </div>
+                      )}
+                      {mapLoaded && (
+                        <FamilyMapView
+                          mapLoaded={mapLoaded}
+                          members={family.members || []}
+                          currentUserId={userId}
+                          onMemberClick={(member) => {
+                            console.log("Member clicked:", member);
+                            // You can add more actions here, like showing member details
+                          }}
+                        />
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             )}

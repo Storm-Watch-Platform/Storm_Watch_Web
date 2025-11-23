@@ -200,7 +200,7 @@ export async function getFamilyById(groupId) {
             name: `Member ${index + 1}`,
             phone: "",
             location: null,
-            status: "safe",
+            status: "unknown",
             role: index === 0 ? "owner" : "member",
           };
         } catch (error) {
@@ -214,7 +214,7 @@ export async function getFamilyById(groupId) {
             name: `Member ${index + 1}`,
             phone: "",
             location: null,
-            status: "safe",
+            status: "unknown",
             role: index === 0 ? "owner" : "member",
           };
         }
@@ -356,6 +356,36 @@ export async function joinGroup(inviteCode) {
 }
 
 /**
+ * Normalize status from API format (SAFE, CAUTION, DANGER, UNKNOWN) to frontend format (safe, warning, danger, unknown)
+ * @param {string} apiStatus - Status from API (uppercase)
+ * @returns {string} Normalized status (lowercase)
+ */
+function normalizeStatus(apiStatus) {
+  if (!apiStatus || typeof apiStatus !== "string") {
+    return "unknown";
+  }
+  
+  const normalized = apiStatus.toUpperCase().trim();
+  
+  switch (normalized) {
+    case "SAFE":
+      return "safe";
+    case "CAUTION":
+      return "warning"; // Map CAUTION to warning for frontend
+    case "DANGER":
+      return "danger";
+    case "UNKNOWN":
+      return "unknown";
+    default:
+      // If it's already lowercase, return as is if valid
+      if (["safe", "warning", "danger", "unknown"].includes(apiStatus.toLowerCase())) {
+        return apiStatus.toLowerCase();
+      }
+      return "unknown";
+  }
+}
+
+/**
  * Get member details from a group
  * @param {string} groupId - Group ID
  * @param {string} memberId - Member ID
@@ -403,6 +433,9 @@ export async function getMemberDetails(groupId, memberId) {
 
     // Transform backend response to match frontend format
     let location = null;
+    const apiStatus = data.location?.status || "UNKNOWN";
+    const normalizedStatus = normalizeStatus(apiStatus);
+    
     if (data.location) {
       // Handle nested location structure
       const loc = data.location.location || data.location;
@@ -411,7 +444,7 @@ export async function getMemberDetails(groupId, memberId) {
           lat: loc.coordinates[1], // coordinates[0] is longitude, coordinates[1] is latitude
           lng: loc.coordinates[0],
           accuracy: data.location.accuracy_m || 0,
-          status: data.location.status || "",
+          status: apiStatus, // Keep original API status in location object
           updatedAt: data.location.updated_at || 0,
         };
       }
@@ -422,7 +455,7 @@ export async function getMemberDetails(groupId, memberId) {
       name: data.name || "Người dùng",
       phone: data.phone || "",
       location: location,
-      status: data.location?.status || "safe",
+      status: normalizedStatus, // Use normalized status for frontend
       lastSeen: data.location?.updated_at
         ? new Date(data.location.updated_at * 1000).toISOString()
         : null,

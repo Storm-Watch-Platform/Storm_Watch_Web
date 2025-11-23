@@ -13,7 +13,8 @@ import SearchLocation from "../components/Location/SearchLocation";
 import ReportModal from "../components/Reports/ReportModal";
 import SOSDetailModal from "../components/SOS/SOSDetailModal";
 import WeatherWidget from "../components/Weather/WeatherWidget";
-import { queryZoneByCoordinates, getNearbySOS } from "../services/api";
+import StatusSelector from "../components/Status/StatusSelector";
+import { queryZoneByCoordinates, getNearbySOS, getZonesByBounds } from "../services/api";
 import { getWeatherByCoordinates } from "../services/weatherService";
 import { calculateDistanceKm } from "../utils/distance";
 import {
@@ -32,7 +33,23 @@ function Home() {
   const [mapLoaded, setMapLoaded] = useState(false);
   const [mapError, setMapError] = useState(null);
   const [zoneInfo, setZoneInfo] = useState(null);
-  const [centerLocation, setCenterLocation] = useState(DEFAULT_LOCATION);
+  
+  // Load saved location from localStorage or use default
+  const [centerLocation, setCenterLocation] = useState(() => {
+    try {
+      const saved = localStorage.getItem('last_location');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.lat && parsed.lng) {
+          console.log('📍 [Home] Loaded saved location from localStorage:', parsed);
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load saved location:', e);
+    }
+    return DEFAULT_LOCATION;
+  });
   const [userLocation, setUserLocation] = useState(null); // User's actual GPS location
   const [reports, setReports] = useState([]);
   const [selectedReport, setSelectedReport] = useState(null);
@@ -45,8 +62,10 @@ function Home() {
   const [sosLoading, setSosLoading] = useState(false);
   const [showSOSModal, setShowSOSModal] = useState(false);
   const [selectedSOS, setSelectedSOS] = useState(null);
+  const [userStatus, setUserStatus] = useState("UNKNOWN"); // User's safety status
   const userSelectedRef = useRef(false);
   const mapsScriptLoadedRef = useRef(false);
+  const hasInitializedLocationRef = useRef(false); // Track if location has been initialized
 
   // Load Google Maps API dynamically
   useEffect(() => {
@@ -140,15 +159,57 @@ function Home() {
 
     // Add error handler for Google Maps errors
     window.gm_authFailure = () => {
-      setMapError(
+      const errorMsg = 
         "Lỗi xác thực Google Maps API. Vui lòng kiểm tra:\n" +
-          "1. API key có đúng không?\n" +
-          "2. Billing đã được enable trong Google Cloud Console?\n" +
-          '3. Application restrictions: Đảm bảo "HTTP referrers (web sites)" được chọn và domain đã được thêm\n' +
-          "4. Maps JavaScript API đã được enable?"
-      );
+        "1. API key có đúng không?\n" +
+        "2. Billing đã được enable trong Google Cloud Console?\n" +
+        '3. Application restrictions: Đảm bảo "HTTP referrers (web sites)" được chọn và domain đã được thêm\n' +
+        "4. Maps JavaScript API đã được enable?\n" +
+        "5. Đợi 5 phút sau khi thay đổi cấu hình";
+      setMapError(errorMsg);
+      mapsScriptLoadedRef.current = false;
+      console.error("❌ [Google Maps] Authentication failed:", errorMsg);
+    };
+    
+    // Handle Google Maps loading errors
+    const handleMapsError = (error) => {
+      console.error("❌ [Google Maps] Error:", error);
+      if (error && error.message) {
+        if (error.message.includes("BillingNotEnabledMapError") || error.message.includes("billing")) {
+          setMapError(
+            "Lỗi: Billing chưa được enable cho Google Maps API.\n\n" +
+            "Vui lòng:\n" +
+            "1. Vào Google Cloud Console → Billing\n" +
+            "2. Enable billing cho project của bạn\n" +
+            "3. Đảm bảo có payment method được thêm\n" +
+            "4. Đợi vài phút để cấu hình có hiệu lực\n\n" +
+            "Lưu ý: Google Maps Platform yêu cầu billing được enable, nhưng có $200 credit miễn phí mỗi tháng."
+          );
+        } else if (error.message.includes("RefererNotAllowedMapError") || error.message.includes("referer")) {
+          setMapError(
+            "Lỗi: Domain chưa được thêm vào API key restrictions.\n\n" +
+            "Vui lòng:\n" +
+            "1. Vào Google Cloud Console → APIs & Services → Credentials\n" +
+            "2. Click vào API key của bạn\n" +
+            "3. Application restrictions: Chọn 'HTTP referrers (web sites)'\n" +
+            "4. Thêm domain: " + window.location.hostname + "\n" +
+            "5. Đợi 5 phút sau khi thay đổi"
+          );
+        } else {
+          setMapError("Lỗi Google Maps API: " + error.message);
+        }
+      }
       mapsScriptLoadedRef.current = false;
     };
+    
+    // Listen for unhandled errors
+    const errorHandler = (event) => {
+      if (event.message && (event.message.includes('maps.googleapis.com') || event.message.includes('Google Maps'))) {
+        handleMapsError({ message: event.message });
+      }
+    };
+    
+    window.addEventListener('error', errorHandler);
 
     // Listen for Google Maps errors in console
     const originalError = console.error;
@@ -202,11 +263,97 @@ function Home() {
         clearTimeout(cleanupConsole);
       }
       console.error = originalError;
+      // Remove error handler
+      window.removeEventListener('error', errorHandler);
       // Remove script if component unmounts before it loads
       if (script.parentNode) {
         script.parentNode.removeChild(script);
       }
     };
+  }, []);
+
+  /**
+   * Calculate bounds from center location with a radius (in km)
+   * @param {Object} center - { lat: number, lng: number }
+   * @param {number} radiusKm - Radius in kilometers (default: 10km)
+   * @returns {Object} Bounds object { minLat, minLon, maxLat, maxLon }
+   */
+  const calculateBoundsFromCenter = useCallback((center, radiusKm = 10) => {
+    // Approximate: 1 degree latitude ≈ 111 km
+    // Longitude varies by latitude, but we'll use an approximation
+    const latDelta = radiusKm / 111;
+    const lngDelta = radiusKm / (111 * Math.cos((center.lat * Math.PI) / 180));
+    
+    return {
+      minLat: center.lat - latDelta,
+      minLon: center.lng - lngDelta,
+      maxLat: center.lat + latDelta,
+      maxLon: center.lng + lngDelta,
+    };
+  }, []);
+
+  /**
+   * Find the zone closest to center location or highest risk zone
+   * @param {Array} zones - Array of zone objects
+   * @param {Object} center - { lat: number, lng: number }
+   * @returns {Object|null} Selected zone or null
+   */
+  const selectZoneFromZones = useCallback((zones, center) => {
+    if (!zones || zones.length === 0) return null;
+    
+    // Find zone with highest riskScore first
+    const sortedByRisk = [...zones].sort((a, b) => {
+      const riskA = parseFloat(a.riskScore) || 0;
+      const riskB = parseFloat(b.riskScore) || 0;
+      return riskB - riskA;
+    });
+    
+    // If there's a high-risk zone (>= 0.7), prefer it
+    const highRiskZone = sortedByRisk.find(z => {
+      const risk = parseFloat(z.riskScore) || 0;
+      return risk >= 0.7;
+    });
+    
+    if (highRiskZone) return highRiskZone;
+    
+    // Otherwise, find the closest zone to center
+    let closestZone = null;
+    let minDistance = Infinity;
+    
+    zones.forEach(zone => {
+      if (!zone.center || !zone.center.lat || !zone.center.lng) return;
+      
+      const distance = calculateDistanceKm(
+        center.lat,
+        center.lng,
+        zone.center.lat,
+        zone.center.lng
+      );
+      
+      if (distance < minDistance) {
+        minDistance = distance;
+        closestZone = zone;
+      }
+    });
+    
+    return closestZone || sortedByRisk[0]; // Fallback to highest risk if no close zone
+  }, []);
+
+  /**
+   * Determine risk level from riskScore (0-1.0 scale)
+   * @param {number} riskScore - Risk score from 0 to 1.0
+   * @returns {string} Risk level: "high", "medium", "low", "unknown"
+   */
+  const getRiskLevelFromScore = useCallback((riskScore) => {
+    if (riskScore === null || riskScore === undefined || isNaN(riskScore)) {
+      return "unknown";
+    }
+    
+    const score = parseFloat(riskScore);
+    if (score >= 0.7) return "high";
+    if (score >= 0.4) return "medium";
+    if (score >= 0) return "low";
+    return "unknown";
   }, []);
 
   const applyReportFilters = useCallback(
@@ -327,15 +474,53 @@ function Home() {
           lng: location.lng,
         };
 
-        setZoneInfo(response.zone || null);
-        setCenterLocation({
+        // Fetch zones data using bounds API
+        try {
+          const bounds = calculateBoundsFromCenter(center, 10); // 10km radius
+          console.log("🗺️ [Home] Fetching zones for bounds:", bounds);
+          const zones = await getZonesByBounds(bounds);
+          console.log("✅ [Home] Zones fetched:", zones.length);
+          
+          // Select the most relevant zone (highest risk or closest to center)
+          const selectedZone = selectZoneFromZones(zones, center);
+          
+          if (selectedZone) {
+            console.log("✅ [Home] Selected zone:", selectedZone);
+            // Transform zone to match expected format
+            setZoneInfo({
+              ...selectedZone,
+              center: selectedZone.center,
+              riskScore: selectedZone.riskScore,
+              label: selectedZone.label,
+              updatedAt: selectedZone.updatedAt,
+            });
+          } else {
+            // Fallback to old zone info if no zones found
+            setZoneInfo(response.zone || null);
+          }
+        } catch (zonesError) {
+          console.warn("⚠️ [Home] Failed to fetch zones, using fallback:", zonesError);
+          // Fallback to old zone info if zones API fails
+          setZoneInfo(response.zone || null);
+        }
+        const newLocation = {
           lat: center.lat,
           lng: center.lng,
           address:
             location.address ||
             response.zone?.address ||
+            centerLocation.address ||
             DEFAULT_LOCATION.address,
-        });
+        };
+        setCenterLocation(newLocation);
+        
+        // Save to localStorage to persist across reloads
+        try {
+          localStorage.setItem('last_location', JSON.stringify(newLocation));
+          console.log('📍 [Home] Saved location to localStorage:', newLocation);
+        } catch (e) {
+          console.warn('Failed to save location:', e);
+        }
 
         console.log(
           "🔍 [Home] Raw reports before filtering:",
@@ -381,7 +566,7 @@ function Home() {
         setMapError("Không thể truy vấn dữ liệu. Vui lòng thử lại.");
       }
     },
-    [applyReportFilters]
+    [applyReportFilters, calculateBoundsFromCenter, selectZoneFromZones]
   );
 
   const requestUserLocation = useCallback(
@@ -391,9 +576,16 @@ function Home() {
           const errorMsg = "Trình duyệt không hỗ trợ xác định vị trí.";
           console.error("Geolocation not supported");
           if (options.silent) {
-            handleLocationSelect(DEFAULT_LOCATION, { fromUser: false }).finally(
-              resolve
-            );
+            // Only fallback to DEFAULT_LOCATION if no location has been set yet
+            if (!hasInitializedLocationRef.current && centerLocation.lat === DEFAULT_LOCATION.lat && centerLocation.lng === DEFAULT_LOCATION.lng) {
+              handleLocationSelect(DEFAULT_LOCATION, { fromUser: false }).finally(
+                resolve
+              );
+            } else {
+              // Use existing location, don't change it
+              console.log('📍 [Home] Keeping existing location, not falling back to default');
+              resolve();
+            }
           } else {
             reject(new Error(errorMsg));
           }
@@ -465,9 +657,16 @@ function Home() {
             }
 
             if (options.silent) {
-              handleLocationSelect(DEFAULT_LOCATION, {
-                fromUser: false,
-              }).finally(resolve);
+              // Only fallback to DEFAULT_LOCATION if no location has been set yet
+              if (!hasInitializedLocationRef.current && centerLocation.lat === DEFAULT_LOCATION.lat && centerLocation.lng === DEFAULT_LOCATION.lng) {
+                handleLocationSelect(DEFAULT_LOCATION, {
+                  fromUser: false,
+                }).finally(resolve);
+              } else {
+                // Use existing location, don't change it
+                console.log('📍 [Home] Geolocation failed, keeping existing location');
+                resolve();
+              }
             } else {
               reject(new Error(errorMsg));
             }
@@ -484,20 +683,46 @@ function Home() {
 
   useEffect(() => {
     if (mapLoaded && !bootstrapped) {
-      requestUserLocation({ silent: true }).catch(() => {});
+      // Mark as initialized
+      hasInitializedLocationRef.current = true;
+      
+      // Only request user location if we're still at default location
+      // Otherwise, use the saved location from localStorage
+      if (centerLocation.lat === DEFAULT_LOCATION.lat && centerLocation.lng === DEFAULT_LOCATION.lng) {
+        console.log('📍 [Home] At default location, requesting user location...');
+        requestUserLocation({ silent: true }).catch(() => {
+          console.log('📍 [Home] Failed to get user location, keeping default');
+        });
+      } else {
+        console.log('📍 [Home] Using saved location, not requesting new one');
+        // Use saved location, fetch data for it
+        handleLocationSelect(centerLocation, { fromUser: false }).catch(() => {
+          console.error('Failed to load data for saved location');
+        });
+      }
       setBootstrapped(true);
     }
-  }, [mapLoaded, bootstrapped, requestUserLocation]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapLoaded, bootstrapped]);
 
   const zoneSummary = useMemo(() => {
     if (!zoneInfo) return null;
+    
+    const riskScore = zoneInfo.riskScore !== undefined && zoneInfo.riskScore !== null
+      ? parseFloat(zoneInfo.riskScore)
+      : null;
+    
+    const riskLevel = riskScore !== null && !isNaN(riskScore)
+      ? getRiskLevelFromScore(riskScore)
+      : (zoneInfo.riskLevel || zoneInfo.label?.toLowerCase() || "unknown");
+    
     return {
-      riskLevel: zoneInfo.riskLevel || "unknown",
-      score: zoneInfo.score || 0,
+      riskLevel: riskLevel,
+      score: riskScore !== null && !isNaN(riskScore) ? riskScore : 0,
       reportCount: reports.length,
-      updatedAt: zoneInfo.lastUpdated,
+      updatedAt: zoneInfo.updatedAt || zoneInfo.lastUpdated,
     };
-  }, [zoneInfo, reports.length]);
+  }, [zoneInfo, reports.length, getRiskLevelFromScore]);
 
   const handleFocusReport = (report) => {
     setHighlightedReport(report);
@@ -655,12 +880,29 @@ function Home() {
 
         {zoneSummary && (
           <div className="space-y-4">
-            {/* Weather Widget - Full Width Top Row */}
-            <WeatherWidget
-              weatherData={weatherData}
-              isLoading={weatherLoading}
-              error={weatherError}
-            />
+            {/* Weather Widget and Status Selector - Top Row */}
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+              {/* Weather Widget - Takes 3 columns */}
+              <div className="lg:col-span-3">
+                <WeatherWidget
+                  weatherData={weatherData}
+                  isLoading={weatherLoading}
+                  error={weatherError}
+                />
+              </div>
+              
+              {/* Status Selector - Takes 1 column */}
+              <div className="lg:col-span-1">
+                <div className="bg-white/90 backdrop-blur-md border border-blue-200 rounded-2xl p-4 shadow-lg h-full flex items-center justify-center">
+                  <div className="w-full">
+                    <p className="text-xs text-blue-600 uppercase tracking-wide mb-3 font-semibold text-center">
+                      Trạng thái của bạn
+                    </p>
+                    <StatusSelector onStatusChange={setUserStatus} />
+                  </div>
+                </div>
+              </div>
+            </div>
 
             {/* Summary Cards - 3 Column Grid Below */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -685,7 +927,7 @@ function Home() {
                   Risk Score
                 </p>
                 <p className="text-3xl font-bold text-blue-600">
-                  {zoneSummary.score}/10
+                  {zoneSummary.score.toFixed(2)}/1.0
                 </p>
               </div>
               <div className="bg-white/90 backdrop-blur-md border border-blue-200 rounded-2xl p-5 shadow-lg hover:shadow-xl hover:bg-white transition-all">

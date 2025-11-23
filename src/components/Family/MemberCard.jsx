@@ -6,12 +6,14 @@ const statusColors = {
   safe: 'bg-green-500/20 text-green-400 border-green-500/40',
   warning: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40',
   danger: 'bg-red-500/20 text-red-400 border-red-500/40',
+  unknown: 'bg-gray-500/20 text-gray-400 border-gray-500/40',
 };
 
 const statusLabels = {
   safe: 'An toàn',
   warning: 'Cảnh báo',
   danger: 'Nguy hiểm',
+  unknown: 'Không xác định',
 };
 
 export default function MemberCard({ member, isOwner }) {
@@ -29,8 +31,8 @@ export default function MemberCard({ member, isOwner }) {
             )}
           </div>
         </div>
-        <span className={`text-xs px-2 py-1 rounded-full border ${statusColors[member.status] || statusColors.safe}`}>
-          {statusLabels[member.status] || statusLabels.safe}
+        <span className={`text-xs px-2 py-1 rounded-full border ${statusColors[member.status] || statusColors.unknown}`}>
+          {statusLabels[member.status] || statusLabels.unknown}
         </span>
       </div>
 
