@@ -71,11 +71,11 @@ function Home() {
   useEffect(() => {
     const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 
+    // Only show error if API key is missing AND map fails to load
+    // Don't show error if map loads successfully (even with billing watermark)
     if (!GOOGLE_MAPS_API_KEY) {
-      setMapError(
-        "VITE_GOOGLE_MAPS_API_KEY chưa được cấu hình. Vui lòng thêm vào file .env"
-      );
-      return;
+      // Don't set error immediately - wait to see if map loads
+      console.warn("⚠️ [Home] VITE_GOOGLE_MAPS_API_KEY not configured");
     }
 
     // Check if already loaded
@@ -113,13 +113,29 @@ function Home() {
       try {
         if (window.google && window.google.maps) {
           setMapLoaded(true);
+          // Clear any previous errors if map loads successfully
+          setMapError(null);
         } else {
-          setMapError("Google Maps API đã tải nhưng không khả dụng.");
+          // Only set error if map truly fails to load
+          if (!GOOGLE_MAPS_API_KEY) {
+            setMapError(
+              "VITE_GOOGLE_MAPS_API_KEY chưa được cấu hình. Vui lòng thêm vào file .env"
+            );
+          } else {
+            setMapError("Google Maps API đã tải nhưng không khả dụng.");
+          }
           mapsScriptLoadedRef.current = false;
         }
       } catch (error) {
         console.error("Error in Google Maps callback:", error);
-        setMapError("Lỗi khi khởi tạo Google Maps API.");
+        // Only set error if API key is missing or there's a real error
+        if (!GOOGLE_MAPS_API_KEY) {
+          setMapError(
+            "VITE_GOOGLE_MAPS_API_KEY chưa được cấu hình. Vui lòng thêm vào file .env"
+          );
+        } else {
+          setMapError("Lỗi khi khởi tạo Google Maps API.");
+        }
         mapsScriptLoadedRef.current = false;
       } finally {
         // Cleanup callback after use
@@ -142,14 +158,28 @@ function Home() {
         if (window.google && window.google.maps) {
           console.log("Google Maps API loaded via onload fallback");
           setMapLoaded(true);
+          // Clear any previous errors if map loads successfully
+          setMapError(null);
+        } else if (!GOOGLE_MAPS_API_KEY) {
+          // Only set error if API key is missing and map fails to load
+          setMapError(
+            "VITE_GOOGLE_MAPS_API_KEY chưa được cấu hình. Vui lòng thêm vào file .env"
+          );
         }
       }, 1000);
     };
 
     script.onerror = () => {
-      setMapError(
-        "Không thể tải Google Maps API. Vui lòng kiểm tra API key và kết nối mạng."
-      );
+      // Only set error if script truly fails to load
+      if (!GOOGLE_MAPS_API_KEY) {
+        setMapError(
+          "VITE_GOOGLE_MAPS_API_KEY chưa được cấu hình. Vui lòng thêm vào file .env"
+        );
+      } else {
+        setMapError(
+          "Không thể tải Google Maps API. Vui lòng kiểm tra API key và kết nối mạng."
+        );
+      }
       mapsScriptLoadedRef.current = false;
       // Cleanup callback on error
       if (window[callbackName]) {
@@ -158,48 +188,29 @@ function Home() {
     };
 
     // Add error handler for Google Maps errors
+    // Note: This is called when there's an authentication error, but if map still loads
+    // (with watermark), we shouldn't show error banner
     window.gm_authFailure = () => {
-      const errorMsg = 
-        "Lỗi xác thực Google Maps API. Vui lòng kiểm tra:\n" +
-        "1. API key có đúng không?\n" +
-        "2. Billing đã được enable trong Google Cloud Console?\n" +
-        '3. Application restrictions: Đảm bảo "HTTP referrers (web sites)" được chọn và domain đã được thêm\n' +
-        "4. Maps JavaScript API đã được enable?\n" +
-        "5. Đợi 5 phút sau khi thay đổi cấu hình";
-      setMapError(errorMsg);
-      mapsScriptLoadedRef.current = false;
-      console.error("❌ [Google Maps] Authentication failed:", errorMsg);
+      // Don't set error immediately - check if map actually loads
+      console.warn("⚠️ [Google Maps] Authentication warning (may still work with watermark)");
+      // Only set error if map truly fails to load (checked in callback/onload)
     };
     
     // Handle Google Maps loading errors
+    // Only show errors if map truly fails to load, not just billing warnings
     const handleMapsError = (error) => {
-      console.error("❌ [Google Maps] Error:", error);
+      console.warn("⚠️ [Google Maps] Warning:", error);
+      // Don't set error immediately - billing errors may still allow map to load with watermark
+      // Only set error if map actually fails to load (checked in callback/onload)
       if (error && error.message) {
         if (error.message.includes("BillingNotEnabledMapError") || error.message.includes("billing")) {
-          setMapError(
-            "Lỗi: Billing chưa được enable cho Google Maps API.\n\n" +
-            "Vui lòng:\n" +
-            "1. Vào Google Cloud Console → Billing\n" +
-            "2. Enable billing cho project của bạn\n" +
-            "3. Đảm bảo có payment method được thêm\n" +
-            "4. Đợi vài phút để cấu hình có hiệu lực\n\n" +
-            "Lưu ý: Google Maps Platform yêu cầu billing được enable, nhưng có $200 credit miễn phí mỗi tháng."
-          );
+          // Billing error - map may still work with watermark, so don't show error banner
+          console.warn("⚠️ [Google Maps] Billing not enabled - map may show watermark but still work");
         } else if (error.message.includes("RefererNotAllowedMapError") || error.message.includes("referer")) {
-          setMapError(
-            "Lỗi: Domain chưa được thêm vào API key restrictions.\n\n" +
-            "Vui lòng:\n" +
-            "1. Vào Google Cloud Console → APIs & Services → Credentials\n" +
-            "2. Click vào API key của bạn\n" +
-            "3. Application restrictions: Chọn 'HTTP referrers (web sites)'\n" +
-            "4. Thêm domain: " + window.location.hostname + "\n" +
-            "5. Đợi 5 phút sau khi thay đổi"
-          );
-        } else {
-          setMapError("Lỗi Google Maps API: " + error.message);
+          // Referer error - this is more serious, but still check if map loads
+          console.warn("⚠️ [Google Maps] Referer not allowed - check if map loads");
         }
       }
-      mapsScriptLoadedRef.current = false;
     };
     
     // Listen for unhandled errors
@@ -212,30 +223,22 @@ function Home() {
     window.addEventListener('error', errorHandler);
 
     // Listen for Google Maps errors in console
+    // Don't show error banner for billing warnings if map still loads
     const originalError = console.error;
     const errorListener = (message) => {
       if (
         typeof message === "string" &&
         message.includes("BillingNotEnabledMapError")
       ) {
-        setMapError(
-          "Lỗi: Billing chưa được enable cho Google Maps API.\n\n" +
-            "Vui lòng:\n" +
-            "1. Vào Google Cloud Console → Billing\n" +
-            "2. Enable billing cho project của bạn\n" +
-            "3. Đảm bảo có payment method được thêm\n" +
-            "4. Đợi vài phút để cấu hình có hiệu lực\n\n" +
-            "Lưu ý: Google Maps Platform yêu cầu billing được enable, nhưng có $200 credit miễn phí mỗi tháng."
-        );
-        mapsScriptLoadedRef.current = false;
+        // Billing error - map may still work with watermark, so don't show error banner
+        console.warn("⚠️ [Google Maps] Billing not enabled - map may show watermark but still work");
+        // Don't set error - let callback/onload check if map actually loads
       } else if (
         typeof message === "string" &&
         message.includes("Google Maps JavaScript API error")
       ) {
-        // Catch other Google Maps errors
-        setMapError(
-          "Lỗi Google Maps API. Vui lòng kiểm tra console để xem chi tiết lỗi."
-        );
+        // Only set error if map truly fails to load (checked in callback/onload)
+        console.warn("⚠️ [Google Maps] API error - check if map loads");
       }
     };
 
