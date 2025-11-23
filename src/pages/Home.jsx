@@ -814,60 +814,6 @@ function Home() {
       />
 
       <main className="container mx-auto px-4 py-8 space-y-6">
-        {mapError && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-300 rounded-lg shadow-md">
-            <div className="flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-              <div className="flex-1">
-                <p className="text-red-700 font-semibold mb-2">
-                  Lỗi Google Maps API
-                </p>
-                <details className="text-sm text-red-600">
-                  <summary className="cursor-pointer hover:text-red-700 mb-2 font-medium">
-                    Chi tiết lỗi và hướng dẫn khắc phục
-                  </summary>
-                  <pre className="mt-2 p-3 bg-red-50 rounded text-xs whitespace-pre-wrap break-words text-red-800 border border-red-200">
-                    {mapError}
-                  </pre>
-                  <div className="mt-3 text-xs text-red-700 space-y-1">
-                    <p className="font-semibold">Các bước khắc phục:</p>
-                    <ol className="list-decimal list-inside space-y-1 ml-2">
-                      <li>
-                        Vào{" "}
-                        <a
-                          href="https://console.cloud.google.com/"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="underline hover:text-red-800 text-blue-600"
-                        >
-                          Google Cloud Console
-                        </a>
-                      </li>
-                      <li>Chọn project → APIs & Services → Credentials</li>
-                      <li>Click vào API key của bạn</li>
-                      <li>
-                        Application restrictions: Chọn "HTTP referrers (web
-                        sites)" và thêm{" "}
-                        <code className="bg-slate-800 px-1 rounded">
-                          http://localhost:*
-                        </code>
-                      </li>
-                      <li>
-                        API restrictions: Đảm bảo "Maps JavaScript API" và
-                        "Places API" được enable
-                      </li>
-                      <li>
-                        Kiểm tra Billing đã được enable trong Google Cloud
-                        Console
-                      </li>
-                      <li>Đợi 5 phút sau khi thay đổi cấu hình</li>
-                    </ol>
-                  </div>
-                </details>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* <div className="w-full">
             <SearchLocation
