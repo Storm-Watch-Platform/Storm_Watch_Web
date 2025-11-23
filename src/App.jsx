@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { isAuthenticated } from './services/authService';
 import { connectSTOMP, disconnectSTOMP, startLocationTracking } from './services/stompService';
+import { AnalysisProvider } from './contexts/AnalysisContext';
 import Home from './pages/Home';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -62,8 +63,9 @@ function App() {
   }, []); // Run once on mount
 
   return (
-    <Router>
-      <Routes>
+    <AnalysisProvider>
+      <Router>
+        <Routes>
         {/* Public Routes */}
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
@@ -129,8 +131,9 @@ function App() {
 
         {/* 404 */}
         <Route path="*" element={<NotFound />} />
-      </Routes>
-    </Router>
+        </Routes>
+      </Router>
+    </AnalysisProvider>
   );
 }
 

@@ -1,6 +1,7 @@
 // STOMP WebSocket Service
 // Based on the demo HTML file from backend team
 import { getCurrentPosition as getCurrentPositionWithFake } from "../utils/fakeLocation";
+import { analyzeWithAI } from "./api";
 
 // Auto-detect WebSocket URL based on environment
 // Local: ws:// (no SSL), Production: wss:// (with SSL)
@@ -95,7 +96,12 @@ export function connectSTOMP(userID) {
       // Replace NULL bytes for logging
       const nullChar = String.fromCharCode(0);
       const logData = data.split(nullChar).join("<NUL>");
-      console.log("[STOMP] <<< RECEIVED:", logData);
+      
+      // Log ALL received messages for debugging
+      console.log("[STOMP] <<< RECEIVED RAW DATA:", logData.substring(0, 500)); // First 500 chars
+      console.log("[STOMP] <<< RECEIVED DATA TYPE:", typeof data);
+      console.log("[STOMP] <<< RECEIVED DATA LENGTH:", data.length);
+      console.log("[STOMP] <<< STARTS WITH:", data.substring(0, 20));
 
       // Handle STOMP CONNECTED frame
       if (data.startsWith("CONNECTED")) {
@@ -131,6 +137,15 @@ export function connectSTOMP(userID) {
               );
             });
         }
+
+        // Try to subscribe to alerts and reports after connection
+        // This may be needed to receive broadcast messages from backend
+        setTimeout(() => {
+          console.log("[STOMP] 🔔 Attempting to subscribe to alerts and reports...");
+          subscribeToAlertsAndReports();
+        }, 1000);
+
+        return; // Don't process further for CONNECTED frame
       }
 
       // Handle errors
@@ -139,6 +154,109 @@ export function connectSTOMP(userID) {
         isConnected = false;
         if (connectionReject) {
           connectionReject(new Error("STOMP connection error: " + data));
+        }
+        return; // Don't process further for ERROR frame
+      }
+
+      // Handle MESSAGE frames (alerts and reports)
+      if (data.startsWith("MESSAGE")) {
+        console.log("🔔 [STOMP] ========================================");
+        console.log("🔔 [STOMP] MESSAGE FRAME DETECTED!");
+        console.log("🔔 [STOMP] Full message:", logData);
+        console.log("🔔 [STOMP] ========================================");
+        
+        try {
+          // Parse STOMP MESSAGE frame
+          // Format: MESSAGE\nheader1:value1\nheader2:value2\n\n{body}\0
+          const lines = data.split("\n");
+          const headers = {};
+          let bodyStartIndex = -1;
+
+          console.log("🔔 [STOMP] Parsing MESSAGE frame...");
+          console.log("🔔 [STOMP] Total lines:", lines.length);
+
+          // Parse headers (skip first line "MESSAGE")
+          for (let i = 1; i < lines.length; i++) {
+            const line = lines[i];
+            if (line === "") {
+              // Empty line indicates start of body
+              bodyStartIndex = i + 1;
+              console.log("🔔 [STOMP] Found body start at line:", bodyStartIndex);
+              break;
+            }
+            const colonIndex = line.indexOf(":");
+            if (colonIndex > 0) {
+              const key = line.substring(0, colonIndex).trim();
+              const value = line.substring(colonIndex + 1).trim();
+              headers[key] = value;
+              console.log(`🔔 [STOMP] Header: ${key} = ${value}`);
+            }
+          }
+
+          console.log("🔔 [STOMP] Parsed headers:", headers);
+
+          // Extract body (everything after empty line, remove NULL byte at end)
+          if (bodyStartIndex >= 0) {
+            const bodyLines = lines.slice(bodyStartIndex);
+            let bodyText = bodyLines.join("\n");
+            // Remove NULL byte at the end
+            if (bodyText.endsWith(String.fromCharCode(0))) {
+              bodyText = bodyText.slice(0, -1);
+            }
+
+            console.log("🔔 [STOMP] Body text (first 500 chars):", bodyText.substring(0, 500));
+
+            // Parse JSON body
+            let messageBody;
+            try {
+              messageBody = JSON.parse(bodyText);
+              console.log("🔔 [STOMP] Parsed message body:", messageBody);
+            } catch (parseError) {
+              console.error("❌ [STOMP] Failed to parse message body as JSON:", parseError);
+              console.error("❌ [STOMP] Body text that failed:", bodyText);
+              return;
+            }
+
+            // Check message type from headers or body
+            const messageType = headers["type"] || headers["message-type"] || messageBody.type;
+            console.log("🔔 [STOMP] ========================================");
+            console.log("🔔 [STOMP] 📨 Received MESSAGE frame");
+            console.log("🔔 [STOMP] Message type:", messageType);
+            console.log("🔔 [STOMP] Headers:", headers);
+            console.log("🔔 [STOMP] Body keys:", Object.keys(messageBody));
+            console.log("🔔 [STOMP] Full body:", JSON.stringify(messageBody, null, 2));
+            console.log("🔔 [STOMP] ========================================");
+
+            // Handle alert messages
+            if (messageType === "alert" || messageBody.alertId || messageBody.alert_id || messageBody.AlertId) {
+              console.log("🚨 [STOMP] ✅ Identified as ALERT message - Processing...");
+              handleIncomingAlert(messageBody);
+            }
+            // Handle report messages
+            else if (messageType === "report" || messageBody.reportId || messageBody.report_id || messageBody.id) {
+              console.log("📝 [STOMP] ✅ Identified as REPORT message - Processing...");
+              handleIncomingReport(messageBody);
+            }
+            else {
+              console.warn("⚠️ [STOMP] Unknown message type. Headers:", headers);
+              console.warn("⚠️ [STOMP] Message body:", messageBody);
+              console.warn("⚠️ [STOMP] Not processing as alert or report");
+            }
+          } else {
+            console.warn("⚠️ [STOMP] No body found in MESSAGE frame");
+          }
+        } catch (error) {
+          console.error("❌ [STOMP] ========================================");
+          console.error("❌ [STOMP] Error processing MESSAGE frame");
+          console.error("❌ [STOMP] Error:", error);
+          console.error("❌ [STOMP] Stack:", error.stack);
+          console.error("❌ [STOMP] ========================================");
+        }
+      } else {
+        // Log other frame types for debugging
+        const frameType = data.split("\n")[0] || data.substring(0, 20);
+        if (frameType !== "CONNECTED" && frameType !== "ERROR") {
+          console.log("ℹ️ [STOMP] Received non-MESSAGE frame:", frameType);
         }
       }
     };
@@ -479,6 +597,36 @@ export function subscribeToUser(targetUserId) {
 }
 
 /**
+ * Subscribe to alerts and reports (broadcast messages)
+ * This may be needed to receive alert/report messages from backend
+ */
+export function subscribeToAlertsAndReports() {
+  if (!ws || !isConnected) {
+    console.warn("[STOMP] Cannot subscribe: WebSocket not connected");
+    return;
+  }
+
+  // Try different subscription patterns based on backend implementation
+  // Pattern 1: Subscribe to all alerts
+  const alertFrame = "SUBSCRIBE\n" + `destination:/topic/alerts\n\n` + STOMP_NULL;
+  ws.send(alertFrame);
+  console.log("[STOMP] >>> SENT SUBSCRIBE to /topic/alerts");
+
+  // Pattern 2: Subscribe to all reports
+  const reportFrame = "SUBSCRIBE\n" + `destination:/topic/reports\n\n` + STOMP_NULL;
+  ws.send(reportFrame);
+  console.log("[STOMP] >>> SENT SUBSCRIBE to /topic/reports");
+
+  // Pattern 3: Subscribe to user-specific messages
+  const userId = localStorage.getItem("userId");
+  if (userId) {
+    const userFrame = "SUBSCRIBE\n" + `destination:/user/${userId}/messages\n\n` + STOMP_NULL;
+    ws.send(userFrame);
+    console.log("[STOMP] >>> SENT SUBSCRIBE to /user/" + userId + "/messages");
+  }
+}
+
+/**
  * Unsubscribe from user updates
  * @param {string} targetUserId - User ID to unsubscribe from
  */
@@ -610,4 +758,121 @@ export function isSTOMPConnected() {
  */
 export function getCurrentUserId() {
   return userId;
+}
+
+/**
+ * Handle incoming alert message from STOMP
+ * @param {Object} alertData - Alert data from STOMP message
+ */
+async function handleIncomingAlert(alertData) {
+  try {
+    console.log("🚨 [STOMP] ========================================");
+    console.log("🚨 [STOMP] Processing incoming alert for AI analysis");
+    console.log("🚨 [STOMP] Alert data:", JSON.stringify(alertData, null, 2));
+    console.log("🚨 [STOMP] ========================================");
+
+    // Transform alert data to match API format
+    // Based on the image provided, API expects: { alerts: [...] }
+    const alertForAPI = {
+      alertId: alertData.alertId || alertData.alert_id || alertData.id,
+      UserID: alertData.UserID || alertData.userID || alertData.user_id || userId,
+      location: alertData.location || {
+        type: "Point",
+        coordinates: [alertData.lon || alertData.lng || 0, alertData.lat || 0],
+      },
+      Body: alertData.Body || alertData.body || alertData.message || "",
+      RadiusM: alertData.RadiusM || alertData.radius_m || alertData.radiusM || 10000,
+      TTLMin: alertData.TTLMin || alertData.ttl_min || alertData.ttlMin || 5,
+      ExpiresAt: alertData.ExpiresAt || alertData.expires_at || alertData.expiresAt,
+      Visibility: alertData.Visibility || alertData.visibility || "PUBLIC",
+      Status: alertData.Status || alertData.status || "RAISED",
+      UserName: alertData.UserName || alertData.user_name || alertData.userName || "",
+      PhoneNumber: alertData.PhoneNumber || alertData.phone_number || alertData.phoneNumber || "",
+    };
+
+    // Call AI analyze API
+    console.log("🚨 [STOMP] Calling AI analyze API with alert data...");
+    const analysisResult = await analyzeWithAI({ alerts: [alertForAPI] });
+    
+    // Store result in localStorage and dispatch event
+    if (analysisResult) {
+      const resultWithMetadata = {
+        ...analysisResult,
+        timestamp: new Date().toISOString(),
+        source: "alert",
+        sourceId: alertForAPI.alertId,
+      };
+      localStorage.setItem("ai_analysis_result", JSON.stringify(resultWithMetadata));
+      window.dispatchEvent(new Event("ai-analysis-updated"));
+      console.log("✅ [STOMP] ========================================");
+      console.log("✅ [STOMP] AI analysis result stored successfully");
+      console.log("✅ [STOMP] Result:", JSON.stringify(resultWithMetadata, null, 2));
+      console.log("✅ [STOMP] ========================================");
+    }
+  } catch (error) {
+    console.error("❌ [STOMP] ========================================");
+    console.error("❌ [STOMP] Error analyzing alert with AI");
+    console.error("❌ [STOMP] Error:", error.message);
+    console.error("❌ [STOMP] Stack:", error.stack);
+    console.error("❌ [STOMP] ========================================");
+  }
+}
+
+/**
+ * Handle incoming report message from STOMP
+ * @param {Object} reportData - Report data from STOMP message
+ */
+async function handleIncomingReport(reportData) {
+  try {
+    console.log("📝 [STOMP] ========================================");
+    console.log("📝 [STOMP] Processing incoming report for AI analysis");
+    console.log("📝 [STOMP] Report data:", JSON.stringify(reportData, null, 2));
+    console.log("📝 [STOMP] ========================================");
+
+    // Transform report data to match API format
+    // Based on the image provided, API expects: { reports: [...] }
+    const reportForAPI = {
+      id: reportData.id || reportData.reportId || reportData.report_id,
+      user_id: reportData.user_id || reportData.userId || reportData.UserID || userId,
+      type: reportData.type || reportData.category || "OTHER",
+      detail: reportData.detail || reportData.subCategory || "",
+      description: reportData.description || reportData.body || "",
+      image: reportData.image || reportData.images?.[0] || "",
+      location: reportData.location || {
+        type: "Point",
+        coordinates: [reportData.lon || reportData.lng || 0, reportData.lat || 0],
+      },
+      timestamp: reportData.timestamp || Date.now(),
+      status: reportData.status || "",
+      phone_number: reportData.phone_number || reportData.phoneNumber || reportData.PhoneNumber || "",
+      user_name: reportData.user_name || reportData.userName || reportData.UserName || "",
+      enrichment: reportData.enrichment || {},
+    };
+
+    // Call AI analyze API
+    console.log("📝 [STOMP] Calling AI analyze API with report data...");
+    const analysisResult = await analyzeWithAI({ reports: [reportForAPI] });
+    
+    // Store result in localStorage and dispatch event
+    if (analysisResult) {
+      const resultWithMetadata = {
+        ...analysisResult,
+        timestamp: new Date().toISOString(),
+        source: "report",
+        sourceId: reportForAPI.id,
+      };
+      localStorage.setItem("ai_analysis_result", JSON.stringify(resultWithMetadata));
+      window.dispatchEvent(new Event("ai-analysis-updated"));
+      console.log("✅ [STOMP] ========================================");
+      console.log("✅ [STOMP] AI analysis result stored successfully");
+      console.log("✅ [STOMP] Result:", JSON.stringify(resultWithMetadata, null, 2));
+      console.log("✅ [STOMP] ========================================");
+    }
+  } catch (error) {
+    console.error("❌ [STOMP] ========================================");
+    console.error("❌ [STOMP] Error analyzing report with AI");
+    console.error("❌ [STOMP] Error:", error.message);
+    console.error("❌ [STOMP] Stack:", error.stack);
+    console.error("❌ [STOMP] ========================================");
+  }
 }

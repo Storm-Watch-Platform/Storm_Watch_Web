@@ -14,13 +14,18 @@ import ReportModal from "../components/Reports/ReportModal";
 import SOSDetailModal from "../components/SOS/SOSDetailModal";
 import WeatherWidget from "../components/Weather/WeatherWidget";
 import StatusSelector from "../components/Status/StatusSelector";
-import { queryZoneByCoordinates, getNearbySOS, getZonesByBounds } from "../services/api";
+import {
+  queryZoneByCoordinates,
+  getNearbySOS,
+  getZonesByBounds,
+} from "../services/api";
 import { getWeatherByCoordinates } from "../services/weatherService";
 import { calculateDistanceKm } from "../utils/distance";
 import {
   getCurrentPosition as getCurrentPositionWithFake,
   getFakeLocation,
 } from "../utils/fakeLocation";
+import { useAIAnalysis } from "../hooks/useAIAnalysis";
 
 const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
 const DEFAULT_LOCATION = {
@@ -33,20 +38,23 @@ function Home() {
   const [mapLoaded, setMapLoaded] = useState(false);
   const [mapError, setMapError] = useState(null);
   const [zoneInfo, setZoneInfo] = useState(null);
-  
+
   // Load saved location from localStorage or use default
   const [centerLocation, setCenterLocation] = useState(() => {
     try {
-      const saved = localStorage.getItem('last_location');
+      const saved = localStorage.getItem("last_location");
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed.lat && parsed.lng) {
-          console.log('📍 [Home] Loaded saved location from localStorage:', parsed);
+          console.log(
+            "📍 [Home] Loaded saved location from localStorage:",
+            parsed
+          );
           return parsed;
         }
       }
     } catch (e) {
-      console.warn('Failed to load saved location:', e);
+      console.warn("Failed to load saved location:", e);
     }
     return DEFAULT_LOCATION;
   });
@@ -192,10 +200,12 @@ function Home() {
     // (with watermark), we shouldn't show error banner
     window.gm_authFailure = () => {
       // Don't set error immediately - check if map actually loads
-      console.warn("⚠️ [Google Maps] Authentication warning (may still work with watermark)");
+      console.warn(
+        "⚠️ [Google Maps] Authentication warning (may still work with watermark)"
+      );
       // Only set error if map truly fails to load (checked in callback/onload)
     };
-    
+
     // Handle Google Maps loading errors
     // Only show errors if map truly fails to load, not just billing warnings
     const handleMapsError = (error) => {
@@ -203,24 +213,38 @@ function Home() {
       // Don't set error immediately - billing errors may still allow map to load with watermark
       // Only set error if map actually fails to load (checked in callback/onload)
       if (error && error.message) {
-        if (error.message.includes("BillingNotEnabledMapError") || error.message.includes("billing")) {
+        if (
+          error.message.includes("BillingNotEnabledMapError") ||
+          error.message.includes("billing")
+        ) {
           // Billing error - map may still work with watermark, so don't show error banner
-          console.warn("⚠️ [Google Maps] Billing not enabled - map may show watermark but still work");
-        } else if (error.message.includes("RefererNotAllowedMapError") || error.message.includes("referer")) {
+          console.warn(
+            "⚠️ [Google Maps] Billing not enabled - map may show watermark but still work"
+          );
+        } else if (
+          error.message.includes("RefererNotAllowedMapError") ||
+          error.message.includes("referer")
+        ) {
           // Referer error - this is more serious, but still check if map loads
-          console.warn("⚠️ [Google Maps] Referer not allowed - check if map loads");
+          console.warn(
+            "⚠️ [Google Maps] Referer not allowed - check if map loads"
+          );
         }
       }
     };
-    
+
     // Listen for unhandled errors
     const errorHandler = (event) => {
-      if (event.message && (event.message.includes('maps.googleapis.com') || event.message.includes('Google Maps'))) {
+      if (
+        event.message &&
+        (event.message.includes("maps.googleapis.com") ||
+          event.message.includes("Google Maps"))
+      ) {
         handleMapsError({ message: event.message });
       }
     };
-    
-    window.addEventListener('error', errorHandler);
+
+    window.addEventListener("error", errorHandler);
 
     // Listen for Google Maps errors in console
     // Don't show error banner for billing warnings if map still loads
@@ -231,7 +255,9 @@ function Home() {
         message.includes("BillingNotEnabledMapError")
       ) {
         // Billing error - map may still work with watermark, so don't show error banner
-        console.warn("⚠️ [Google Maps] Billing not enabled - map may show watermark but still work");
+        console.warn(
+          "⚠️ [Google Maps] Billing not enabled - map may show watermark but still work"
+        );
         // Don't set error - let callback/onload check if map actually loads
       } else if (
         typeof message === "string" &&
@@ -267,7 +293,7 @@ function Home() {
       }
       console.error = originalError;
       // Remove error handler
-      window.removeEventListener('error', errorHandler);
+      window.removeEventListener("error", errorHandler);
       // Remove script if component unmounts before it loads
       if (script.parentNode) {
         script.parentNode.removeChild(script);
@@ -286,7 +312,7 @@ function Home() {
     // Longitude varies by latitude, but we'll use an approximation
     const latDelta = radiusKm / 111;
     const lngDelta = radiusKm / (111 * Math.cos((center.lat * Math.PI) / 180));
-    
+
     return {
       minLat: center.lat - latDelta,
       minLon: center.lng - lngDelta,
@@ -303,42 +329,42 @@ function Home() {
    */
   const selectZoneFromZones = useCallback((zones, center) => {
     if (!zones || zones.length === 0) return null;
-    
+
     // Find zone with highest riskScore first
     const sortedByRisk = [...zones].sort((a, b) => {
       const riskA = parseFloat(a.riskScore) || 0;
       const riskB = parseFloat(b.riskScore) || 0;
       return riskB - riskA;
     });
-    
+
     // If there's a high-risk zone (>= 0.7), prefer it
-    const highRiskZone = sortedByRisk.find(z => {
+    const highRiskZone = sortedByRisk.find((z) => {
       const risk = parseFloat(z.riskScore) || 0;
       return risk >= 0.7;
     });
-    
+
     if (highRiskZone) return highRiskZone;
-    
+
     // Otherwise, find the closest zone to center
     let closestZone = null;
     let minDistance = Infinity;
-    
-    zones.forEach(zone => {
+
+    zones.forEach((zone) => {
       if (!zone.center || !zone.center.lat || !zone.center.lng) return;
-      
+
       const distance = calculateDistanceKm(
         center.lat,
         center.lng,
         zone.center.lat,
         zone.center.lng
       );
-      
+
       if (distance < minDistance) {
         minDistance = distance;
         closestZone = zone;
       }
     });
-    
+
     return closestZone || sortedByRisk[0]; // Fallback to highest risk if no close zone
   }, []);
 
@@ -351,7 +377,7 @@ function Home() {
     if (riskScore === null || riskScore === undefined || isNaN(riskScore)) {
       return "unknown";
     }
-    
+
     const score = parseFloat(riskScore);
     if (score >= 0.7) return "high";
     if (score >= 0.4) return "medium";
@@ -483,10 +509,10 @@ function Home() {
           console.log("🗺️ [Home] Fetching zones for bounds:", bounds);
           const zones = await getZonesByBounds(bounds);
           console.log("✅ [Home] Zones fetched:", zones.length);
-          
+
           // Select the most relevant zone (highest risk or closest to center)
           const selectedZone = selectZoneFromZones(zones, center);
-          
+
           if (selectedZone) {
             console.log("✅ [Home] Selected zone:", selectedZone);
             // Transform zone to match expected format
@@ -502,7 +528,10 @@ function Home() {
             setZoneInfo(response.zone || null);
           }
         } catch (zonesError) {
-          console.warn("⚠️ [Home] Failed to fetch zones, using fallback:", zonesError);
+          console.warn(
+            "⚠️ [Home] Failed to fetch zones, using fallback:",
+            zonesError
+          );
           // Fallback to old zone info if zones API fails
           setZoneInfo(response.zone || null);
         }
@@ -516,13 +545,13 @@ function Home() {
             DEFAULT_LOCATION.address,
         };
         setCenterLocation(newLocation);
-        
+
         // Save to localStorage to persist across reloads
         try {
-          localStorage.setItem('last_location', JSON.stringify(newLocation));
-          console.log('📍 [Home] Saved location to localStorage:', newLocation);
+          localStorage.setItem("last_location", JSON.stringify(newLocation));
+          console.log("📍 [Home] Saved location to localStorage:", newLocation);
         } catch (e) {
-          console.warn('Failed to save location:', e);
+          console.warn("Failed to save location:", e);
         }
 
         console.log(
@@ -545,7 +574,7 @@ function Home() {
             lng: center.lng,
           });
           console.log("✅ Weather data received:", weather);
-          
+
           // Only set weather data if it's real data (not mock)
           if (weather.isMock) {
             console.warn(
@@ -553,7 +582,9 @@ function Home() {
             );
             // Don't show mock data - set to null instead
             setWeatherData(null);
-            setWeatherError("VITE_WEATHER_API_KEY chưa được cấu hình. Weather widget sẽ không hiển thị.");
+            setWeatherError(
+              "VITE_WEATHER_API_KEY chưa được cấu hình. Weather widget sẽ không hiển thị."
+            );
           } else {
             console.log("✅ Real weather data from OpenWeatherMap API!");
             setWeatherData(weather);
@@ -576,7 +607,10 @@ function Home() {
           setWeatherLoading(true);
           setWeatherError(null);
           try {
-            console.log("🌤️ Fetching weather after zone API error for:", fallbackCenter);
+            console.log(
+              "🌤️ Fetching weather after zone API error for:",
+              fallbackCenter
+            );
             const weather = await getWeatherByCoordinates({
               lat: fallbackCenter.lat,
               lng: fallbackCenter.lng,
@@ -590,9 +624,14 @@ function Home() {
               setWeatherData(weather);
             }
           } catch (weatherErr) {
-            console.error("❌ Error fetching weather after zone error:", weatherErr);
+            console.error(
+              "❌ Error fetching weather after zone error:",
+              weatherErr
+            );
             setWeatherData(null);
-            setWeatherError(weatherErr.message || "Không thể tải thông tin thời tiết");
+            setWeatherError(
+              weatherErr.message || "Không thể tải thông tin thời tiết"
+            );
           } finally {
             setWeatherLoading(false);
           }
@@ -610,13 +649,19 @@ function Home() {
           console.error("Geolocation not supported");
           if (options.silent) {
             // Only fallback to DEFAULT_LOCATION if no location has been set yet
-            if (!hasInitializedLocationRef.current && centerLocation.lat === DEFAULT_LOCATION.lat && centerLocation.lng === DEFAULT_LOCATION.lng) {
-              handleLocationSelect(DEFAULT_LOCATION, { fromUser: false }).finally(
-                resolve
-              );
+            if (
+              !hasInitializedLocationRef.current &&
+              centerLocation.lat === DEFAULT_LOCATION.lat &&
+              centerLocation.lng === DEFAULT_LOCATION.lng
+            ) {
+              handleLocationSelect(DEFAULT_LOCATION, {
+                fromUser: false,
+              }).finally(resolve);
             } else {
               // Use existing location, don't change it
-              console.log('📍 [Home] Keeping existing location, not falling back to default');
+              console.log(
+                "📍 [Home] Keeping existing location, not falling back to default"
+              );
               resolve();
             }
           } else {
@@ -691,13 +736,19 @@ function Home() {
 
             if (options.silent) {
               // Only fallback to DEFAULT_LOCATION if no location has been set yet
-              if (!hasInitializedLocationRef.current && centerLocation.lat === DEFAULT_LOCATION.lat && centerLocation.lng === DEFAULT_LOCATION.lng) {
+              if (
+                !hasInitializedLocationRef.current &&
+                centerLocation.lat === DEFAULT_LOCATION.lat &&
+                centerLocation.lng === DEFAULT_LOCATION.lng
+              ) {
                 handleLocationSelect(DEFAULT_LOCATION, {
                   fromUser: false,
                 }).finally(resolve);
               } else {
                 // Use existing location, don't change it
-                console.log('📍 [Home] Geolocation failed, keeping existing location');
+                console.log(
+                  "📍 [Home] Geolocation failed, keeping existing location"
+                );
                 resolve();
               }
             } else {
@@ -718,19 +769,24 @@ function Home() {
     if (mapLoaded && !bootstrapped) {
       // Mark as initialized
       hasInitializedLocationRef.current = true;
-      
+
       // Only request user location if we're still at default location
       // Otherwise, use the saved location from localStorage
-      if (centerLocation.lat === DEFAULT_LOCATION.lat && centerLocation.lng === DEFAULT_LOCATION.lng) {
-        console.log('📍 [Home] At default location, requesting user location...');
+      if (
+        centerLocation.lat === DEFAULT_LOCATION.lat &&
+        centerLocation.lng === DEFAULT_LOCATION.lng
+      ) {
+        console.log(
+          "📍 [Home] At default location, requesting user location..."
+        );
         requestUserLocation({ silent: true }).catch(() => {
-          console.log('📍 [Home] Failed to get user location, keeping default');
+          console.log("📍 [Home] Failed to get user location, keeping default");
         });
       } else {
-        console.log('📍 [Home] Using saved location, not requesting new one');
+        console.log("📍 [Home] Using saved location, not requesting new one");
         // Use saved location, fetch data for it
         handleLocationSelect(centerLocation, { fromUser: false }).catch(() => {
-          console.error('Failed to load data for saved location');
+          console.error("Failed to load data for saved location");
         });
       }
       setBootstrapped(true);
@@ -740,15 +796,17 @@ function Home() {
 
   const zoneSummary = useMemo(() => {
     if (!zoneInfo) return null;
-    
-    const riskScore = zoneInfo.riskScore !== undefined && zoneInfo.riskScore !== null
-      ? parseFloat(zoneInfo.riskScore)
-      : null;
-    
-    const riskLevel = riskScore !== null && !isNaN(riskScore)
-      ? getRiskLevelFromScore(riskScore)
-      : (zoneInfo.riskLevel || zoneInfo.label?.toLowerCase() || "unknown");
-    
+
+    const riskScore =
+      zoneInfo.riskScore !== undefined && zoneInfo.riskScore !== null
+        ? parseFloat(zoneInfo.riskScore)
+        : null;
+
+    const riskLevel =
+      riskScore !== null && !isNaN(riskScore)
+        ? getRiskLevelFromScore(riskScore)
+        : zoneInfo.riskLevel || zoneInfo.label?.toLowerCase() || "unknown";
+
     return {
       riskLevel: riskLevel,
       score: riskScore !== null && !isNaN(riskScore) ? riskScore : 0,
@@ -803,6 +861,12 @@ function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [centerLocation?.lat, centerLocation?.lng]);
 
+  // Auto-analyze reports and alerts with AI
+  useAIAnalysis(reports, nearbySOS, {
+    debounceMs: 3000, // Wait 3 seconds after data changes before analyzing
+    enabled: true, // Enable AI analysis
+  });
+
   const handleBellClick = () => {
     if (centerLocation) {
       fetchNearbySOS(centerLocation);
@@ -844,7 +908,6 @@ function Home() {
       />
 
       <main className="container mx-auto px-4 py-8 space-y-6">
-
         {/* <div className="w-full">
             <SearchLocation
               onLocationSelect={(location) =>
@@ -860,7 +923,13 @@ function Home() {
         {/* Weather Widget and Status Selector - Only show weather if real data available */}
         <div className="space-y-4">
           {/* Weather Widget and Status Selector - Top Row */}
-          <div className={`grid grid-cols-1 gap-4 ${weatherData && !weatherData.isMock ? 'lg:grid-cols-4' : 'lg:grid-cols-1'}`}>
+          <div
+            className={`grid grid-cols-1 gap-4 ${
+              weatherData && !weatherData.isMock
+                ? "lg:grid-cols-4"
+                : "lg:grid-cols-1"
+            }`}
+          >
             {/* Weather Widget - Only show if real data (not mock, not null) */}
             {weatherData && !weatherData.isMock && (
               <div className="lg:col-span-3">
@@ -871,9 +940,15 @@ function Home() {
                 />
               </div>
             )}
-            
+
             {/* Status Selector - Always show, takes full width if no weather */}
-            <div className={weatherData && !weatherData.isMock ? "lg:col-span-1" : "lg:col-span-1"}>
+            <div
+              className={
+                weatherData && !weatherData.isMock
+                  ? "lg:col-span-1"
+                  : "lg:col-span-1"
+              }
+            >
               <div className="bg-white/90 backdrop-blur-md border border-blue-200 rounded-2xl p-4 shadow-lg h-full flex items-center justify-center">
                 <div className="w-full">
                   <p className="text-xs text-blue-600 uppercase tracking-wide mb-3 font-semibold text-center">

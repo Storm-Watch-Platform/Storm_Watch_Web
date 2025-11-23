@@ -20,6 +20,7 @@ import {
   isAuthenticated,
 } from "../../services/authService";
 import { formatRelativeTime } from "../../utils/formatTime";
+import AnalysisIndicator from "../Analysis/AnalysisIndicator";
 
 export default function Header({ sosBellProps = null }) {
   const navigate = useNavigate();
@@ -100,6 +101,8 @@ export default function Header({ sosBellProps = null }) {
                     {user?.name || "Người dùng"}
                   </span>
                 </div>
+                {/* AI Analysis Indicator */}
+                <AnalysisIndicator />
               </>
             ) : (
               <>

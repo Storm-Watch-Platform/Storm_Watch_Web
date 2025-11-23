@@ -405,3 +405,118 @@ export async function getNearbySOS(coordinates, km = 5) {
     return []; // Return empty array on error
   }
 }
+
+/**
+ * Analyze alerts or reports using AI
+ * @param {Object} data - { alerts: [...] } or { reports: [...] }
+ * @returns {Promise<Object>} Analysis result with cause, current_status, recommendation, severity
+ */
+export async function analyzeWithAI(data) {
+  // Remove /api suffix if present, as ai/analyze endpoint is at root level
+  const baseUrl = API_BASE_URL.replace(/\/api$/, '');
+  const apiUrl = `${baseUrl}/ai/analyze`;
+  
+  // Get authentication token
+  const token = localStorage.getItem("token") || localStorage.getItem("accessToken");
+  
+  // Generate request ID for tracking
+  const requestId = `AI-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  const startTime = Date.now();
+  
+  console.log("🤖 [AI] ========================================");
+  console.log(`🤖 [AI] [${requestId}] Starting AI analysis request`);
+  console.log(`🤖 [AI] [${requestId}] API URL:`, apiUrl);
+  console.log(`🤖 [AI] [${requestId}] Has token:`, !!token);
+  console.log(`🤖 [AI] [${requestId}] Request data:`, JSON.stringify(data, null, 2));
+  console.log(`🤖 [AI] [${requestId}] Timestamp:`, new Date().toISOString());
+  console.log("🤖 [AI] ========================================");
+
+  // Dispatch event to show loading state
+  window.dispatchEvent(new CustomEvent('ai-analysis-start', { detail: { requestId } }));
+
+  // Prepare headers
+  const headers = {
+    "Content-Type": "application/json",
+  };
+  
+  // Add authorization header if token exists
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  try {
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: headers,
+      body: JSON.stringify(data),
+    });
+
+    const duration = Date.now() - startTime;
+    console.log(`🤖 [AI] [${requestId}] Response received in ${duration}ms`);
+    console.log(`🤖 [AI] [${requestId}] Response status:`, response.status, response.statusText);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ [AI] [${requestId}] HTTP error response:`, errorText);
+      console.error(`❌ [AI] [${requestId}] Status:`, response.status);
+      
+      // Dispatch error event
+      window.dispatchEvent(new CustomEvent('ai-analysis-error', { 
+        detail: { requestId, error: errorText, status: response.status } 
+      }));
+      
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    // Get response as text first (may be wrapped in Markdown code block)
+    const responseText = await response.text();
+    console.log(`🤖 [AI] [${requestId}] Raw response text (first 500 chars):`, responseText.substring(0, 500));
+    
+    // Try to extract JSON from Markdown code block if present
+    let jsonText = responseText.trim();
+    
+    // Check if response is wrapped in Markdown code block (```json ... ```)
+    const markdownJsonMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (markdownJsonMatch) {
+      console.log(`🤖 [AI] [${requestId}] Found Markdown code block, extracting JSON...`);
+      jsonText = markdownJsonMatch[1].trim();
+    }
+    
+    // Parse JSON
+    let result;
+    try {
+      result = JSON.parse(jsonText);
+    } catch (parseError) {
+      console.error(`❌ [AI] [${requestId}] JSON parse error:`, parseError);
+      console.error(`❌ [AI] [${requestId}] Response text that failed to parse:`, jsonText.substring(0, 500));
+      throw new Error(`Failed to parse JSON response: ${parseError.message}`);
+    }
+    console.log("🤖 [AI] ========================================");
+    console.log(`✅ [AI] [${requestId}] Analysis completed successfully`);
+    console.log(`✅ [AI] [${requestId}] Result:`, JSON.stringify(result, null, 2));
+    console.log(`✅ [AI] [${requestId}] Duration: ${duration}ms`);
+    console.log("🤖 [AI] ========================================");
+    
+    // Dispatch success event
+    window.dispatchEvent(new CustomEvent('ai-analysis-success', { 
+      detail: { requestId, result, duration } 
+    }));
+    
+    return result;
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    console.error("🤖 [AI] ========================================");
+    console.error(`❌ [AI] [${requestId}] Error analyzing with AI`);
+    console.error(`❌ [AI] [${requestId}] Error message:`, error.message);
+    console.error(`❌ [AI] [${requestId}] Error stack:`, error.stack);
+    console.error(`❌ [AI] [${requestId}] Duration: ${duration}ms`);
+    console.error("🤖 [AI] ========================================");
+    
+    // Dispatch error event
+    window.dispatchEvent(new CustomEvent('ai-analysis-error', { 
+      detail: { requestId, error: error.message, duration } 
+    }));
+    
+    throw error;
+  }
+}
