@@ -545,28 +545,58 @@ function Home() {
             lng: center.lng,
           });
           console.log("✅ Weather data received:", weather);
+          
+          // Only set weather data if it's real data (not mock)
           if (weather.isMock) {
             console.warn(
-              "⚠️ WARNING: Using MOCK data! Check VITE_WEATHER_API_KEY in .env"
+              "⚠️ WARNING: Received MOCK data! Check VITE_WEATHER_API_KEY in .env"
             );
+            // Don't show mock data - set to null instead
+            setWeatherData(null);
+            setWeatherError("VITE_WEATHER_API_KEY chưa được cấu hình. Weather widget sẽ không hiển thị.");
           } else {
-            console.log("✅ Real weather data from Google API!");
+            console.log("✅ Real weather data from OpenWeatherMap API!");
+            setWeatherData(weather);
           }
-          setWeatherData(weather);
         } catch (weatherErr) {
           console.error("❌ Error fetching weather:", weatherErr);
-          // Show detailed error message
+          // Don't use fallback - just set error and null data
           const errorMsg =
             weatherErr.message || "Không thể tải thông tin thời tiết";
           setWeatherError(errorMsg);
-          // Don't set mock data - let user know there's an error
           setWeatherData(null);
         } finally {
           setWeatherLoading(false);
         }
       } catch (error) {
         console.error("Error fetching zone data:", error);
-        setMapError("Không thể truy vấn dữ liệu. Vui lòng thử lại.");
+        // Even if zone API fails, still try to fetch weather for the location
+        const fallbackCenter = location || centerLocation || DEFAULT_LOCATION;
+        if (fallbackCenter && fallbackCenter.lat && fallbackCenter.lng) {
+          setWeatherLoading(true);
+          setWeatherError(null);
+          try {
+            console.log("🌤️ Fetching weather after zone API error for:", fallbackCenter);
+            const weather = await getWeatherByCoordinates({
+              lat: fallbackCenter.lat,
+              lng: fallbackCenter.lng,
+            });
+            // Only set weather data if it's real data (not mock)
+            if (weather.isMock) {
+              console.warn("⚠️ Received MOCK weather data - not displaying");
+              setWeatherData(null);
+              setWeatherError("VITE_WEATHER_API_KEY chưa được cấu hình.");
+            } else {
+              setWeatherData(weather);
+            }
+          } catch (weatherErr) {
+            console.error("❌ Error fetching weather after zone error:", weatherErr);
+            setWeatherData(null);
+            setWeatherError(weatherErr.message || "Không thể tải thông tin thời tiết");
+          } finally {
+            setWeatherLoading(false);
+          }
+        }
       }
     },
     [applyReportFilters, calculateBoundsFromCenter, selectZoneFromZones]
@@ -827,11 +857,12 @@ function Home() {
             />
           </div> */}
 
-        {zoneSummary && (
-          <div className="space-y-4">
-            {/* Weather Widget and Status Selector - Top Row */}
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-              {/* Weather Widget - Takes 3 columns */}
+        {/* Weather Widget and Status Selector - Only show weather if real data available */}
+        <div className="space-y-4">
+          {/* Weather Widget and Status Selector - Top Row */}
+          <div className={`grid grid-cols-1 gap-4 ${weatherData && !weatherData.isMock ? 'lg:grid-cols-4' : 'lg:grid-cols-1'}`}>
+            {/* Weather Widget - Only show if real data (not mock, not null) */}
+            {weatherData && !weatherData.isMock && (
               <div className="lg:col-span-3">
                 <WeatherWidget
                   weatherData={weatherData}
@@ -839,21 +870,23 @@ function Home() {
                   error={weatherError}
                 />
               </div>
-              
-              {/* Status Selector - Takes 1 column */}
-              <div className="lg:col-span-1">
-                <div className="bg-white/90 backdrop-blur-md border border-blue-200 rounded-2xl p-4 shadow-lg h-full flex items-center justify-center">
-                  <div className="w-full">
-                    <p className="text-xs text-blue-600 uppercase tracking-wide mb-3 font-semibold text-center">
-                      Trạng thái của bạn
-                    </p>
-                    <StatusSelector onStatusChange={setUserStatus} />
-                  </div>
+            )}
+            
+            {/* Status Selector - Always show, takes full width if no weather */}
+            <div className={weatherData && !weatherData.isMock ? "lg:col-span-1" : "lg:col-span-1"}>
+              <div className="bg-white/90 backdrop-blur-md border border-blue-200 rounded-2xl p-4 shadow-lg h-full flex items-center justify-center">
+                <div className="w-full">
+                  <p className="text-xs text-blue-600 uppercase tracking-wide mb-3 font-semibold text-center">
+                    Trạng thái của bạn
+                  </p>
+                  <StatusSelector onStatusChange={setUserStatus} />
                 </div>
               </div>
             </div>
+          </div>
 
-            {/* Summary Cards - 3 Column Grid Below */}
+          {/* Summary Cards - 3 Column Grid Below - Only show if zoneSummary exists */}
+          {zoneSummary && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="bg-white/90 backdrop-blur-md border border-blue-200 rounded-2xl p-5 shadow-lg hover:shadow-xl hover:bg-white transition-all">
                 <p className="text-xs text-blue-600 uppercase tracking-wide mb-2 font-semibold">
@@ -888,8 +921,8 @@ function Home() {
                 </p>
               </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {!mapLoaded && !mapError && (
           <div className="p-8 bg-white/90 backdrop-blur-md rounded-2xl border border-blue-200 flex items-center justify-center gap-3 h-[600px] shadow-lg">

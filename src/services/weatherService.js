@@ -28,11 +28,12 @@ export async function getWeatherByCoordinates(coordinates) {
 
   // Check if API key is configured
   if (!WEATHER_API_KEY) {
-    console.warn("VITE_WEATHER_API_KEY is not configured. Using mock data.");
+    console.warn("VITE_WEATHER_API_KEY is not configured.");
     console.warn(
       "💡 Để lấy dữ liệu thời tiết thật, thêm VITE_WEATHER_API_KEY vào file .env"
     );
-    return getMockWeatherData(coordinates);
+    // Don't return mock data - throw error instead
+    throw new Error("VITE_WEATHER_API_KEY chưa được cấu hình. Vui lòng thêm vào file .env hoặc Vercel Environment Variables.");
   }
 
   console.log(
