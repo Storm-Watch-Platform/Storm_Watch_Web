@@ -192,6 +192,65 @@ export async function getDangerZones() {
 }
 
 /**
+ * Get zones by bounding box
+ * @param {Object} bounds - { minLat, minLon, maxLat, maxLon }
+ * @returns {Promise<Array>} Array of zone objects
+ */
+export async function getZonesByBounds(bounds) {
+  const { minLat, minLon, maxLat, maxLon } = bounds;
+  
+  // Remove /api suffix if present, as zones endpoint is at root level
+  const baseUrl = API_BASE_URL.replace(/\/api$/, '');
+  const apiUrl = `${baseUrl}/zones?minLat=${minLat}&minLon=${minLon}&maxLat=${maxLat}&maxLon=${maxLon}`;
+  
+  console.log("🔍 [API] Calling zones API with bounds:", apiUrl);
+  console.log("🔍 [API] Bounds:", bounds);
+
+  try {
+    const response = await fetch(apiUrl, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("❌ [API] Zones HTTP error response:", errorText);
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    console.log("✅ [API] Zones response:", data);
+    console.log("📊 [API] Zones count:", Array.isArray(data) ? data.length : 0);
+
+    // Transform zones if needed
+    if (Array.isArray(data)) {
+      return data.map((zone) => {
+        // Transform center from GeoJSON Point to { lat, lng }
+        let center = zone.center;
+        if (center && center.type === "Point" && center.coordinates) {
+          center = {
+            lat: center.coordinates[1], // coordinates[1] is latitude
+            lng: center.coordinates[0], // coordinates[0] is longitude
+          };
+        }
+
+        return {
+          ...zone,
+          center,
+        };
+      });
+    }
+
+    return data;
+  } catch (error) {
+    console.error("❌ [API] Error fetching zones by bounds:", error);
+    return []; // Return empty array on error
+  }
+}
+
+/**
  * Get nearby SOS signals
  * @param {Object} coordinates - { lat: number, lng: number }
  * @param {number} km - Radius in kilometers (default: 5)

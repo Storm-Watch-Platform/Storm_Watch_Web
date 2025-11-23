@@ -13,6 +13,7 @@ import {
   Shield,
 } from "lucide-react";
 import { analyzeImage } from "../services/reportService";
+import { getGeminiRateLimitInfo } from "../services/geminiService";
 import {
   connectSTOMP,
   sendReport,
@@ -199,19 +200,46 @@ export default function ReportCreate() {
       id: Date.now() + Math.random(),
     }));
 
-    setImages([...images, ...newImages]);
+    // Check if this is replacing existing images or adding new ones
+    const wasReplacing = images.length > 0;
 
-    // Analyze first image
-    if (files[0] && !imageAnalysis) {
+    // If replacing images, clear old analysis
+    if (wasReplacing) {
+      setImageAnalysis(null);
+    }
+
+    // Update images (append new ones)
+    const updatedImages = [...images, ...newImages];
+    setImages(updatedImages);
+
+    // Always analyze the first image
+    // If replacing, analyze the first new image; otherwise analyze the first image in the list
+    const imageToAnalyze = wasReplacing ? newImages[0] : updatedImages[0];
+
+    if (imageToAnalyze && imageToAnalyze.file) {
       setAnalyzing(true);
       try {
-        const analysis = await analyzeImage(files[0]);
+        console.log(
+          "🔍 [ReportCreate] Analyzing image:",
+          imageToAnalyze.file.name
+        );
+        const analysis = await analyzeImage(imageToAnalyze.file);
         setImageAnalysis(analysis);
+
+        // Auto-select category if not already selected
         if (analysis.suggested_category && !formData.category) {
-          setFormData({ ...formData, category: analysis.suggested_category });
+          setFormData((prev) => ({
+            ...prev,
+            category: analysis.suggested_category,
+          }));
         }
+
+        console.log("✅ [ReportCreate] Analysis completed:", analysis);
       } catch (err) {
-        console.error("Image analysis error:", err);
+        console.error("❌ [ReportCreate] Image analysis error:", err);
+        setError(
+          "Không thể phân tích ảnh. Vui lòng thử lại hoặc tiếp tục mà không phân tích."
+        );
       } finally {
         setAnalyzing(false);
       }
@@ -219,9 +247,31 @@ export default function ReportCreate() {
   };
 
   const handleRemoveImage = (imageId) => {
-    setImages(images.filter((img) => img.id !== imageId));
-    if (images.length === 1) {
+    const remainingImages = images.filter((img) => img.id !== imageId);
+    setImages(remainingImages);
+
+    // Clear analysis if no images left
+    if (remainingImages.length === 0) {
       setImageAnalysis(null);
+    } else if (remainingImages.length > 0) {
+      // Re-analyze first image if images remain
+      setAnalyzing(true);
+      analyzeImage(remainingImages[0].file)
+        .then((analysis) => {
+          setImageAnalysis(analysis);
+          if (analysis.suggested_category && !formData.category) {
+            setFormData((prev) => ({
+              ...prev,
+              category: analysis.suggested_category,
+            }));
+          }
+        })
+        .catch((err) => {
+          console.error("Error re-analyzing image:", err);
+        })
+        .finally(() => {
+          setAnalyzing(false);
+        });
     }
   };
 
@@ -431,23 +481,8 @@ export default function ReportCreate() {
           </div>
         )}
 
-        {imageAnalysis && (
-          <div className="mb-6 p-4 bg-blue-50 border border-blue-300 rounded-lg shadow-md">
-            <p className="text-blue-700 text-sm">
-              <strong>Phân tích ảnh:</strong> Phát hiện{" "}
-              {imageAnalysis.detected?.[0]?.label || "đối tượng"}
-              {imageAnalysis.suggested_category &&
-                ` - Đề xuất: ${
-                  REPORT_CATEGORIES.find(
-                    (c) => c.id === imageAnalysis.suggested_category
-                  )?.label || imageAnalysis.suggested_category
-                }`}
-            </p>
-          </div>
-        )}
-
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Category Selection */}
+          {/* Category Selection - Show category selection if no category selected */}
           {!formData.category ? (
             <div className="bg-white/90 backdrop-blur-md border border-blue-200 rounded-2xl p-6 shadow-lg">
               <label className="block text-sm font-semibold text-blue-900 mb-2">
@@ -499,12 +534,16 @@ export default function ReportCreate() {
             </div>
           ) : (
             <>
-              {/* Selected Category Card */}
+              {/* Selected Category Card - Always show when category is selected */}
               {(() => {
                 const selectedCat = REPORT_CATEGORIES.find(
                   (c) => c.id === formData.category
                 );
-                if (!selectedCat) return null;
+                if (!selectedCat) {
+                  // If category not found, reset to no category
+                  setFormData((prev) => ({ ...prev, category: "" }));
+                  return null;
+                }
                 const IconComponent = selectedCat.icon;
                 const getTextColor = () => {
                   switch (selectedCat.color) {
@@ -544,7 +583,15 @@ export default function ReportCreate() {
                       </div>
                       <button
                         type="button"
-                        onClick={() => handleCategorySelect("")}
+                        onClick={() => {
+                          handleCategorySelect("");
+                          // Clear sub-category when changing category
+                          setFormData((prev) => ({
+                            ...prev,
+                            subCategory: "",
+                            customSubCategory: "",
+                          }));
+                        }}
                         className="p-2 hover:bg-white/50 rounded-full transition-colors"
                       >
                         <X className="w-5 h-5 text-slate-500" />
@@ -554,7 +601,7 @@ export default function ReportCreate() {
                 );
               })()}
 
-              {/* Sub-category Selection */}
+              {/* Sub-category Selection - Always show when category is selected */}
               {(() => {
                 const selectedCat = REPORT_CATEGORIES.find(
                   (c) => c.id === formData.category
@@ -740,6 +787,64 @@ export default function ReportCreate() {
                   ))}
                 </div>
               )}
+
+              {/* Image Analysis Result - Display here for better visibility */}
+              {imageAnalysis && (
+                <div className="mt-4 p-4 bg-gradient-to-r from-blue-50 to-cyan-50 border-2 border-blue-300 rounded-xl shadow-md">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 bg-blue-500 rounded-lg">
+                      <Camera className="w-5 h-5 text-white" />
+                    </div>
+                    <div className="flex-1">
+                      <h4 className="font-bold text-blue-900 mb-2 flex items-center gap-2">
+                        <span>Kết quả phân tích ảnh</span>
+                        {imageAnalysis.confidence && (
+                          <span className="text-xs font-normal text-blue-600 bg-blue-100 px-2 py-1 rounded-full">
+                            {(imageAnalysis.confidence * 100).toFixed(0)}% chính
+                            xác
+                          </span>
+                        )}
+                      </h4>
+
+                      {imageAnalysis.detected &&
+                        imageAnalysis.detected.length > 0 && (
+                          <div className="mb-2">
+                            <p className="text-blue-800 font-semibold text-sm mb-1">
+                              Phát hiện: {imageAnalysis.detected[0].label}
+                            </p>
+                            {imageAnalysis.description && (
+                              <p className="text-blue-700 text-xs leading-relaxed">
+                                {imageAnalysis.description}
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                      {imageAnalysis.suggested_category && (
+                        <div className="mt-3 pt-3 border-t border-blue-200">
+                          <p className="text-xs text-blue-600 mb-1">
+                            <strong>Đề xuất danh mục:</strong>
+                          </p>
+                          <div className="inline-block px-3 py-1.5 bg-blue-100 border border-blue-300 rounded-lg">
+                            <span className="text-blue-900 font-semibold text-sm">
+                              {REPORT_CATEGORIES.find(
+                                (c) => c.id === imageAnalysis.suggested_category
+                              )?.label || imageAnalysis.suggested_category}
+                            </span>
+                          </div>
+                          {!formData.category && (
+                            <p className="text-xs text-blue-600 mt-2">
+                              💡 Danh mục này đã được tự động chọn cho bạn
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Rate Limit Info */}
             </div>
           </div>
 

@@ -2,9 +2,30 @@
 // Based on the demo HTML file from backend team
 import { getCurrentPosition as getCurrentPositionWithFake } from "../utils/fakeLocation";
 
-const WS_URL =
-  import.meta.env.VITE_WS_URL ||
-  "wss://stormwatchbackend-production.up.railway.app/ws";
+// Auto-detect WebSocket URL based on environment
+// Local: ws:// (no SSL), Production: wss:// (with SSL)
+const getWebSocketURL = () => {
+  // If explicitly set in .env, use it
+  if (import.meta.env.VITE_WS_URL) {
+    return import.meta.env.VITE_WS_URL;
+  }
+
+  // Auto-detect: if running on localhost, use ws://, otherwise use wss://
+  const isLocalhost =
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1" ||
+    window.location.hostname === "";
+
+  if (isLocalhost) {
+    // Local development - use ws:// (no SSL)
+    return "ws://localhost:8080/ws";
+  } else {
+    // Production - use wss:// (with SSL)
+    return "wss://stormwatchbackend-production.up.railway.app/ws";
+  }
+};
+
+const WS_URL = getWebSocketURL();
 
 // NULL byte for STOMP frame termination
 const STOMP_NULL = String.fromCharCode(0);
@@ -34,6 +55,11 @@ export function connectSTOMP(userID) {
     console.log("[STOMP] connectSTOMP called with userID:", userID);
     console.log("[STOMP] Called from:", caller);
     console.log("[STOMP] Current state - ws:", ws, "isConnected:", isConnected);
+    console.log(
+      "[STOMP] 🔌 WebSocket URL:",
+      WS_URL,
+      `(${WS_URL.startsWith("wss://") ? "WSS - Secure" : "WS - Local"})`
+    );
 
     if (ws && isConnected) {
       console.log("[STOMP] Already connected, resolving immediately");
@@ -170,19 +196,27 @@ export function sendLocation(locationData) {
       return;
     }
 
-    const { lat, lon, accuracy = 0, status = "UNKNOWN" } = locationData;
+    // Get status from locationData, or from localStorage, or default to UNKNOWN
+    const { lat, lon, accuracy = 0, status: statusFromData } = locationData;
+    const statusFromStorage = localStorage.getItem("user_status") || "UNKNOWN";
+    const status = statusFromData || statusFromStorage || "UNKNOWN";
 
-    // Get cached phone and name from localStorage
+    // Get cached phone, name, and userId from localStorage
     const userName = localStorage.getItem("userName") || "";
     const userPhone = localStorage.getItem("userPhone") || "";
+    const userId = localStorage.getItem("userId") || "";
 
+    // ⚠️ Format chính xác theo backend test file (test_stomp_raw.html)
+    // Backend lấy userId từ STOMP CONNECT frame (user-id header), không cần gửi trong location object
+    // Format phải match 100% với test file:
+    //   Lat, Lon, AccuracyM, Status, UpdatedAt, Username, Phone
     const location = {
       Lat: lat,
       Lon: lon,
       AccuracyM: accuracy,
       Status: status,
       UpdatedAt: Date.now(),
-      Name: userName, // Capital N (theo file test mới nhất)
+      Username: userName, // ⚠️ "Username" với U hoa, s thường (không phải "Name" hay "username")
       Phone: userPhone,
     };
 
@@ -200,6 +234,18 @@ export function sendLocation(locationData) {
         `lat: ${lat}, lon: ${lon}, accuracy: ${accuracy}m, status: ${status}`
       );
       console.log("📍 [STOMP LOCATION] Full payload:", location);
+
+      // Log STOMP frame để debug (chỉ log một phần để không spam)
+      const framePreview = frame.substring(0, 300).replace(/\0/g, "<NUL>");
+      console.log("📍 [STOMP LOCATION] STOMP frame preview:", framePreview);
+
+      // Note: Backend lấy userId từ STOMP CONNECT frame (user-id header), không cần trong location object
+      if (!userId) {
+        console.warn(
+          "⚠️ [STOMP LOCATION] WARNING: userId is missing in localStorage! Backend uses user-id from CONNECT frame."
+        );
+      }
+
       resolve(true);
     } catch (error) {
       console.error("❌ [STOMP LOCATION] Error sending location:", error);
@@ -258,11 +304,13 @@ export function startLocationTracking(options = {}) {
         getCurrentPositionWithFake(
           (position) => {
             const { latitude, longitude, accuracy } = position.coords;
+            // Get status from localStorage (set by StatusSelector component)
+            const userStatus = localStorage.getItem("user_status") || "UNKNOWN";
             sendLocation({
               lat: latitude,
               lon: longitude,
               accuracy: accuracy || 0,
-              status: "ACTIVE",
+              status: userStatus, // Use user-selected status
             }).catch((error) => {
               console.error(
                 "❌ [STOMP LOCATION] Failed to send interval location:",

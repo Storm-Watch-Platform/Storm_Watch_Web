@@ -1,6 +1,7 @@
 // Report Service - Mock API
 import { mockReports } from '../data/mockReports';
 import { calculateDistanceKm } from '../utils/distance';
+import { analyzeImageWithGemini, isGeminiAvailable } from './geminiService';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api';
 
@@ -59,11 +60,25 @@ function getMockReportsNearby(lat, lng, radius) {
 }
 
 /**
- * Analyze image using mock Clova Vision API
+ * Analyze image - Try Gemini API first, fallback to backend API
  * @param {File} file - Image file
  * @returns {Promise<Object>} Analysis result
  */
 export async function analyzeImage(file) {
+  // Try Gemini API first if available
+  if (isGeminiAvailable()) {
+    try {
+      console.log('🔍 [ReportService] Using Gemini API for image analysis');
+      return await analyzeImageWithGemini(file);
+    } catch (error) {
+      console.warn('⚠️ [ReportService] Gemini API failed, falling back to backend:', error);
+      // Continue to backend fallback
+    }
+  } else {
+    console.log('⚠️ [ReportService] Gemini API key not found, using backend API');
+  }
+
+  // Fallback to backend API
   try {
     const formData = new FormData();
     formData.append('image', file);
@@ -81,7 +96,7 @@ export async function analyzeImage(file) {
     return data;
   } catch (error) {
     console.error('Error analyzing image:', error);
-    // Return mock analysis
+    // Return mock analysis as last resort
     return getMockImageAnalysis(file);
   }
 }
